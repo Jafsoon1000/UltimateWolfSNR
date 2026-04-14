@@ -1,0 +1,224 @@
+//@version=5
+indicator("MSNR Entry Setups [LTF Execution]", "MSNR Entries", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500)
+
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║                              INPUTS                                         ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+grp1 = "MTF Alignment STRICT"
+i_show_4h_align  = input.bool(true, "Show 4H Gap Alignments", group=grp1)
+i_show_1h_align  = input.bool(true, "Show 1H Gap Alignments", group=grp1)
+i_show_30m_setup = input.bool(true, "Show 30m Mini Storyline Setups", group=grp1)
+i_show_15m_setup = input.bool(true, "Show 15m Mini Storyline Setups", group=grp1)
+
+grp2 = "Execution Triggers (LTF)"
+i_ema_len      = input.int(5, "5Min EMA Break Length", group=grp2)
+i_show_ltf_ema = input.bool(true, "Plot Execution EMA", group=grp2)
+
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║                         UTILITY FUNCTIONS                                   ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+f_is_bullish(int i) => close[i] > open[i]
+f_is_bearish(int i) => close[i] < open[i]
+f_body_top(int i)  => math.max(close[i], open[i])
+f_body_bot(int i)  => math.min(close[i], open[i])
+
+// Gap Rules: FVG pattern
+f_is_bull_gap() => low > high[2] and f_is_bullish(1)
+f_is_bear_gap() => high < low[2] and f_is_bearish(1)
+
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║                 GLOBAL REQUEST.SECURITY CALLS                               ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+f_htf_data() =>
+    var float _a_shape = na
+    var float _v_shape = na
+    var float _bull_gap_top = na
+    var float _bear_gap_bot = na
+    
+    if close[1] > open[1] and close < open
+        _a_shape := math.max(close[1], open)
+    if close[1] < open[1] and close > open
+        _v_shape := math.min(close[1], open)
+        
+    if f_is_bull_gap()
+        _bull_gap_top := low
+    if f_is_bear_gap()
+        _bear_gap_bot := high
+
+    [_a_shape, _v_shape, _bull_gap_top, _bear_gap_bot]
+
+// MTF Security Calls (using tuples to stay within 40 call limit)
+[h4_a, h4_v, h4_bg, h4_brg]    = request.security(syminfo.tickerid, "240", f_htf_data(), lookahead=barmerge.lookahead_off)
+[h1_a, h1_v, h1_bg, h1_brg]    = request.security(syminfo.tickerid, "60", f_htf_data(), lookahead=barmerge.lookahead_off)
+[m30_a, m30_v, m30_bg, m30_brg] = request.security(syminfo.tickerid, "30", f_htf_data(), lookahead=barmerge.lookahead_off)
+[m15_a, m15_v, m15_bg, m15_brg] = request.security(syminfo.tickerid, "15", f_htf_data(), lookahead=barmerge.lookahead_off)
+
+// Structural Data for Breakouts
+[h1_close, h1_open] = request.security(syminfo.tickerid, "60", [close, open], lookahead=barmerge.lookahead_off)
+[m30_close, m30_open] = request.security(syminfo.tickerid, "30", [close, open], lookahead=barmerge.lookahead_off)
+[m15_close, m15_open] = request.security(syminfo.tickerid, "15", [close, open], lookahead=barmerge.lookahead_off)
+
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║                 MTF STRICT ALIGNMENT ENGINE                                  ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+f_aligns(float val1, float val2) =>
+    _tol = ta.atr(14) * 0.5
+    not na(val1) and not na(val2) and math.abs(val1 - val2) < _tol
+
+// --- 4H GAP ALIGNMENT ---
+// 4H Gap MUST align with 1H Gap + 1H Classic (A/V) + 30m Classic
+bool h4_bull_gap_aligned = f_aligns(h4_bg, h1_bg) and f_aligns(h4_bg, h1_v) and f_aligns(h4_bg, m30_v)
+bool h4_bear_gap_aligned = f_aligns(h4_brg, h1_brg) and f_aligns(h4_brg, h1_a) and f_aligns(h4_brg, m30_a)
+
+// --- 1H GAP ALIGNMENT ---
+// 1H Gap MUST align with 30m Classic + 15m Classic
+bool h1_bull_gap_aligned = f_aligns(h1_bg, m30_v) and f_aligns(h1_bg, m15_v)
+bool h1_bear_gap_aligned = f_aligns(h1_brg, m30_a) and f_aligns(h1_brg, m15_a)
+
+// Visualizing Alignments
+if h4_bull_gap_aligned and i_show_4h_align and barstate.isconfirmed
+    label.new(bar_index, h4_bg, "🟢 4H ALIGNED GAP", color=color.new(#00E676,80), style=label.style_label_up, size=size.small)
+if h4_bear_gap_aligned and i_show_4h_align and barstate.isconfirmed
+    label.new(bar_index, h4_brg, "🔴 4H ALIGNED GAP", color=color.new(#FF4444,80), style=label.style_label_down, size=size.small)
+
+if h1_bull_gap_aligned and i_show_1h_align and barstate.isconfirmed
+    label.new(bar_index, h1_bg, "🟢 1H ALIGNED GAP", color=color.new(#00E676,80), style=label.style_label_up, size=size.small)
+if h1_bear_gap_aligned and i_show_1h_align and barstate.isconfirmed
+    label.new(bar_index, h1_brg, "🔴 1H ALIGNED GAP", color=color.new(#FF4444,80), style=label.style_label_down, size=size.small)
+
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║                 QM & EXTERNAL BREAKOUT ENGINE                               ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+// To track external breakouts, we need to track A/V shapes leading up to a level
+type Level
+    float price
+    int bar_idx
+    string shape_type // "A" or "V"
+
+var a_shapes = array.new<Level>()
+var v_shapes = array.new<Level>()
+
+// Update arrays on confirmed shapes from 15m (since this runs on LTF, we track 15m structure for MSNR Entry)
+if not na(m15_a) and m15_a != m15_a[1]
+    array.push(a_shapes, Level.new(m15_a, bar_index, "A"))
+    if array.size(a_shapes) > 10
+        array.shift(a_shapes)
+
+if not na(m15_v) and m15_v != m15_v[1]
+    array.push(v_shapes, Level.new(m15_v, bar_index, "V"))
+    if array.size(v_shapes) > 10
+        array.shift(v_shapes)
+
+// Internal vs External Breakout Tracker
+var bool is_valid_bull_qm = false
+var float active_bull_rbs = na
+var float active_bull_apex = na
+var float active_bull_ls = na
+
+var bool is_valid_bear_qm = false
+var float active_bear_sbr = na
+var float active_bear_apex = na
+var float active_bear_ls = na
+
+// ─── Bullish QM Logic (External Breakout of A-Shape) ───
+// We need a HTF touch (e.g. 1H V-shape or 30m V-shape -> support)
+if not na(h1_v) and h1_v != h1_v[1]
+    // A fresh support was formed on HTF.
+    // To have a Valid Bullish QM, the price must break the LAST A-shape formed BEFORE this V-shape.
+    if array.size(a_shapes) > 0
+        _last_a = array.get(a_shapes, array.size(a_shapes) - 1)
+        if _last_a.bar_idx < bar_index // Formed before the support formation
+            if close > _last_a.price   // Breakout!
+                is_valid_bull_qm := true
+                active_bull_rbs := _last_a.price
+                active_bull_apex := h1_v
+                // LS is the Low before the A-shape
+                active_bull_ls := array.size(v_shapes) > 1 ? array.get(v_shapes, array.size(v_shapes) - 2).price : na
+                
+                label.new(bar_index, active_bull_rbs, "💎 RBS (Ext. Breakout)", color=color.new(#00E676, 50), style=label.style_label_down)
+                line.new(bar_index, active_bull_rbs, bar_index + 50, active_bull_rbs, color=#00E676, style=line.style_dashed)
+
+// ─── Bearish QM Logic (External Breakout of V-Shape) ───
+if not na(h1_a) and h1_a != h1_a[1]
+    // A fresh resistance was formed on HTF.
+    if array.size(v_shapes) > 0
+        _last_v = array.get(v_shapes, array.size(v_shapes) - 1)
+        if _last_v.bar_idx < bar_index // Formed before the resistance formation
+            if close < _last_v.price   // Breakout!
+                is_valid_bear_qm := true
+                active_bear_sbr := _last_v.price
+                active_bear_apex := h1_a
+                active_bear_ls := array.size(a_shapes) > 1 ? array.get(a_shapes, array.size(a_shapes) - 2).price : na
+                
+                label.new(bar_index, active_bear_sbr, "💎 SBR (Ext. Breakout)", color=color.new(#FF4444, 50), style=label.style_label_up)
+                line.new(bar_index, active_bear_sbr, bar_index + 50, active_bear_sbr, color=#FF4444, style=line.style_dashed)
+
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║                 EXECUTION TRIGGERS (LTF CONFIRMATION)                        ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+ema_val = ta.ema(close, i_ema_len)
+if i_show_ltf_ema
+    plot(ema_val, color=color.purple, title="Execution EMA")
+
+// Trigger 1: 5Min EMA Break 
+bull_ema_break = close[1] < ema_val[1] and close > ema_val and f_is_bullish(0)
+bear_ema_break = close[1] > ema_val[1] and close < ema_val and f_is_bearish(0)
+
+// Trigger 2: Engulfing Rejection
+bull_engulfing = f_is_bullish(0) and f_is_bearish(1) and close > open[1] and math.abs(close-open) > math.abs(close[1]-open[1])
+bear_engulfing = f_is_bearish(0) and f_is_bullish(1) and close < open[1] and math.abs(close-open) > math.abs(close[1]-open[1])
+
+// Evaluate Triggers against Active Setups
+// Bullish Setup Execution (Retesting RBS)
+if is_valid_bull_qm and not na(active_bull_rbs)
+    _tol = ta.atr(14)
+    if low <= active_bull_rbs + _tol and low >= active_bull_rbs - _tol
+        if bull_ema_break
+            label.new(bar_index, low, "🚀 EXECUTE (RBS)\nEMA Break", style=label.style_label_up, color=#00E676, textcolor=color.black)
+            alert("BULLISH SBR/RBS ENTRY TRIGGERED", alert.freq_once_per_bar_close)
+            is_valid_bull_qm := false // Consume setup
+
+// Fallback to LS
+if is_valid_bull_qm and not na(active_bull_ls) and close < active_bull_rbs - ta.atr(14)
+    // RBS Failed, looking at LS
+    _tol = ta.atr(14)
+    if low <= active_bull_ls + _tol and low >= active_bull_ls - _tol
+        if bull_engulfing
+            label.new(bar_index, low, "🚀 EXECUTE (LS)\nEngulfing", style=label.style_label_up, color=#00E676, textcolor=color.black)
+            alert("BULLISH LS ENTRY TRIGGERED", alert.freq_once_per_bar_close)
+            is_valid_bull_qm := false // Consume setup
+
+// Bearish Setup Execution (Retesting SBR)
+if is_valid_bear_qm and not na(active_bear_sbr)
+    _tol = ta.atr(14)
+    if high >= active_bear_sbr - _tol and high <= active_bear_sbr + _tol
+        if bear_ema_break
+            label.new(bar_index, high, "🔻 EXECUTE (SBR)\nEMA Break", style=label.style_label_down, color=#FF4444, textcolor=color.white)
+            alert("BEARISH SBR/RBS ENTRY TRIGGERED", alert.freq_once_per_bar_close)
+            is_valid_bear_qm := false // Consume setup
+
+// Fallback to LS
+if is_valid_bear_qm and not na(active_bear_ls) and close > active_bear_sbr + ta.atr(14)
+    _tol = ta.atr(14)
+    if high >= active_bear_ls - _tol and high <= active_bear_ls + _tol
+        if bear_engulfing
+            label.new(bar_index, high, "🔻 EXECUTE (LS)\nEngulfing", style=label.style_label_down, color=#FF4444, textcolor=color.white)
+            alert("BEARISH LS ENTRY TRIGGERED", alert.freq_once_per_bar_close)
+            is_valid_bear_qm := false // Consume setup
+
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║                 CONTINUATION SETUPS                                          ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+// Mini Storyline SNR (30m / 15m) Continuation
+if not na(m30_v) and f_aligns(m30_v, m15_v) and bull_ema_break
+    label.new(bar_index, low, "🟢 C.SNR (30m)", style=label.style_label_up, color=color.new(#00bcd4, 50))
+    
+if not na(m30_a) and f_aligns(m30_a, m15_a) and bear_ema_break
+    label.new(bar_index, high, "🔴 C.SNR (30m)", style=label.style_label_down, color=color.new(#ff5722, 50))
