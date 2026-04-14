@@ -17,8 +17,10 @@ i_fresh_sup   = input.color(#00E676, "Fresh Support Color", group=grp1)
 i_gap_col     = input.color(#FFD740, "Gap Zone Color", group=grp1)
 i_unfresh_col = input.color(#555555, "Unfresh Level Color", group=grp1)
 i_max_levels  = input.int(25, "Max Active Levels", minval=5, maxval=50, group=grp1)
-i_show_tl     = input.bool(true, "Show Trendlines", group=grp1)
-i_tl_max      = input.int(5, "Trendline Max Touches", minval=2, maxval=10, group=grp1)
+i_show_zz     = input.bool(true, "Show Storyline Zigzag", group=grp1)
+i_zz_bull_col = input.color(#00E676, "Zigzag Bullish Color", group=grp1)
+i_zz_bear_col = input.color(#FF4444, "Zigzag Bearish Color", group=grp1)
+i_zz_width    = input.int(2, "Zigzag Line Width", minval=1, maxval=5, group=grp1)
 
 // ─── Module 2: Breakouts & Patterns ───
 grp2          = "═══ Module 2: Breakouts & QM ═══"
@@ -63,16 +65,14 @@ type Level
     label  lbl     = na
     box    bx      = na
 
-type TLine
-    float p1      = na
-    int   b1      = 0
-    float p2      = na
-    int   b2      = 0
-    int   touches = 0
-    bool  is_res  = true
-    bool  broken  = false
-    line  ln      = na
-    label lbl3    = na      // 3rd touch label
+type StoryZigzag
+    float price    = na
+    int   bar_idx  = 0
+    bool  is_high  = true    // true = swing high, false = swing low
+    int   story_dir = 0     // 1 = bull, -1 = bear
+    string phase   = ""     // "start", "middle", "ending"
+    line  ln       = na      // line connecting to previous point
+    label lbl      = na      // phase marker
 
 type QM
     string dir     = ""    // "bull" or "bear"
@@ -178,43 +178,32 @@ _local_d = f_htf_story_dir()
 d_close_htf = request.security(syminfo.tickerid, "D",   close, lookahead=barmerge.lookahead_off)
 // h4 and h1 close already fetched above
 
-// ─── LTF Data (Calls 8-9) ───
-[m5_cl, m5_op, m5_hi, m5_lo, m5_ema_val] = request.security(syminfo.tickerid, "5",
-  [close, open, high, low, ta.ema(close, i_ema_len)], lookahead=barmerge.lookahead_off)
 
-[m1_cl, m1_op, m1_hi, m1_lo] = request.security(syminfo.tickerid, "1",
-  [close, open, high, low], lookahead=barmerge.lookahead_off)
 
-// ─── LTF Intrabar Data ───
 chart_tf_sec = timeframe.in_seconds()
 
-// Intrabar arrays for 1M and 5M (only valid when chart TF > these)
-[ltf_1m_o, ltf_1m_h, ltf_1m_l, ltf_1m_c] = request.security_lower_tf(syminfo.tickerid, "1",  [open, high, low, close])
-[ltf_5m_o, ltf_5m_h, ltf_5m_l, ltf_5m_c] = request.security_lower_tf(syminfo.tickerid, "5",  [open, high, low, close])
+// 1M and 5M use regular request.security (safe on ANY chart timeframe)
+[m1_c_ltf, m1_o_ltf, m1_h_ltf, m1_l_ltf, m1_c1_ltf, m1_o1_ltf] = request.security(syminfo.tickerid, "1", [close, open, high, low, close[1], open[1]], lookahead=barmerge.lookahead_off)
+[m5_c_ltf, m5_o_ltf, m5_h_ltf, m5_l_ltf, m5_c1_ltf, m5_o1_ltf, m5_h1_ltf, m5_l1_ltf, m5_ema_ltf] = request.security(syminfo.tickerid, "5", [close, open, high, low, close[1], open[1], high[1], low[1], ta.ema(close, i_ema_len)], lookahead=barmerge.lookahead_off)
 
 // 30M and 15M use regular request.security (safe on ANY chart timeframe)
 [m30_c, m30_o, m30_h, m30_l, m30_c1, m30_o1, m30_h1, m30_l1] = request.security(syminfo.tickerid, "30", [close, open, high, low, close[1], open[1], high[1], low[1]], lookahead=barmerge.lookahead_off)
 [m15_c, m15_o, m15_h, m15_l, m15_c1, m15_o1, m15_h1, m15_l1] = request.security(syminfo.tickerid, "15", [close, open, high, low, close[1], open[1], high[1], low[1]], lookahead=barmerge.lookahead_off)
 
-// Timeframe validity flags for intrabar data
-ltf_1m_valid = chart_tf_sec > 60
-ltf_5m_valid = chart_tf_sec > 300
-
-// Total: 15 request.* calls — well within 40 limit ✓
+// Total: 15 request.* calls — well within 40 limit ✓ | Works on ALL timeframes ✓
 
 // ╔══════════════════════════════════════════════════════════════════════════════╗
 // ║            MODULE 1: FOUNDATION — SNR Detection & Trendlines                ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 
 // ─── State Arrays ───
-var levels     = array.new<Level>()
-var trendlines = array.new<TLine>()
+var levels  = array.new<Level>()
+var zz_pts  = array.new<StoryZigzag>()
 
-// Previous A/V shape tracking for trendlines
-var float prev_a_price = na
-var int   prev_a_bar   = 0
-var float prev_v_price = na
-var int   prev_v_bar   = 0
+// Zigzag tracking state
+var float zz_last_price = na
+var int   zz_last_bar   = 0
+var bool  zz_last_was_high = true
 
 // ─── A-Shape Detection (Resistance) ───
 // Bullish candle followed by bearish candle → peak
@@ -232,19 +221,6 @@ if is_a_shape and i_show_ashape and barstate.isconfirmed
                      color=color.new(i_fresh_res, 80), textcolor=i_fresh_res,
                      style=label.style_label_down, size=size.small)
     levels.push(lvl)
-    // Trendline: connect with previous A-shape
-    if i_show_tl and not na(prev_a_price)
-        tl = TLine.new()
-        tl.p1     := prev_a_price
-        tl.b1     := prev_a_bar
-        tl.p2     := a_shape_price
-        tl.b2     := bar_index - 1
-        tl.is_res := true
-        tl.ln     := line.new(prev_a_bar, prev_a_price, bar_index - 1, a_shape_price,
-                       color=#2196F3, style=line.style_solid, width=2, extend=extend.right)
-        trendlines.push(tl)
-    prev_a_price := a_shape_price
-    prev_a_bar   := bar_index - 1
 
 // ─── V-Shape Detection (Support) ───
 // Bearish candle followed by bullish candle → trough
@@ -262,19 +238,6 @@ if is_v_shape and i_show_vshape and barstate.isconfirmed
                      color=color.new(i_fresh_sup, 80), textcolor=i_fresh_sup,
                      style=label.style_label_up, size=size.small)
     levels.push(lvl)
-    // Trendline: connect with previous V-shape
-    if i_show_tl and not na(prev_v_price)
-        tl = TLine.new()
-        tl.p1     := prev_v_price
-        tl.b1     := prev_v_bar
-        tl.p2     := v_shape_price
-        tl.b2     := bar_index - 1
-        tl.is_res := false
-        tl.ln     := line.new(prev_v_bar, prev_v_price, bar_index - 1, v_shape_price,
-                       color=#2196F3, style=line.style_solid, width=2, extend=extend.right)
-        trendlines.push(tl)
-    prev_v_price := v_shape_price
-    prev_v_bar   := bar_index - 1
 
 // ─── Gap Detection ───
 bull_gap = f_is_bullish(1) and f_is_bullish(0) and low > high[1]
@@ -369,62 +332,72 @@ while levels.size() > i_max_levels
     if not na(old.bx)
         box.delete(old.bx)
 
-// ─── Trendline Touch Tracking ───
-if trendlines.size() > 0
-    for i = trendlines.size() - 1 to 0
-        tl = trendlines.get(i)
-        if tl.broken or tl.b2 == tl.b1
-            continue
-        // Calculate trendline value at current bar
-        _slope = (tl.p2 - tl.p1) / (tl.b2 - tl.b1)
-        _tl_val = tl.p2 + _slope * (bar_index - tl.b2)
-        _tol = atr_val * 0.15
-        // Resistance trendline
-        if tl.is_res
-            if high >= _tl_val - _tol and high <= _tl_val + _tol and close < _tl_val
-                tl.touches += 1
-                if tl.touches == 3
-                    tl.lbl3 := label.new(bar_index, _tl_val, "⚡3rd",
-                                 color=color.new(#FF9800, 60), textcolor=#FF9800,
-                                 style=label.style_label_down, size=size.small)
-                    line.set_color(tl.ln, #FF9800)
-                    line.set_width(tl.ln, 3)
-            // Broken = body closes above
-            if close > _tl_val + _tol
-                tl.broken := true
-                line.set_style(tl.ln, line.style_dotted)
-                line.set_color(tl.ln, i_unfresh_col)
-                line.set_extend(tl.ln, extend.none)
-                line.set_x2(tl.ln, bar_index)
-        else
-            // Support trendline
-            if low >= _tl_val - _tol and low <= _tl_val + _tol and close > _tl_val
-                tl.touches += 1
-                if tl.touches == 3
-                    tl.lbl3 := label.new(bar_index, _tl_val, "⚡3rd",
-                                 color=color.new(#FF9800, 60), textcolor=#FF9800,
-                                 style=label.style_label_up, size=size.small)
-                    line.set_color(tl.ln, #FF9800)
-                    line.set_width(tl.ln, 3)
-            if close < _tl_val - _tol
-                tl.broken := true
-                line.set_style(tl.ln, line.style_dotted)
-                line.set_color(tl.ln, i_unfresh_col)
-                line.set_extend(tl.ln, extend.none)
-                line.set_x2(tl.ln, bar_index)
-        // Remove exhausted trendlines (>max touches)
-        if tl.touches >= i_tl_max
-            tl.broken := true
-            line.set_style(tl.ln, line.style_dotted)
-            line.set_extend(tl.ln, extend.none)
+// ─── Storyline Zigzag ───
+// Connects swing highs and lows in sequence, colored by storyline direction
+// Detects when storyline changes and starts a new zigzag
+if i_show_zz and barstate.isconfirmed
+    // Check for new swing high from pivot engine (will be calculated in Module 2)
+    // For now, use A/V shapes as zigzag anchor points
+    _new_point = false
+    _new_price = 0.0
+    _new_bar   = 0
+    _new_is_hi = false
+    // A-shape = local high point
+    if is_a_shape
+        _new_point := true
+        _new_price := a_shape_price
+        _new_bar   := bar_index - 1
+        _new_is_hi := true
+    // V-shape = local low point
+    if is_v_shape
+        _new_point := true
+        _new_price := v_shape_price
+        _new_bar   := bar_index - 1
+        _new_is_hi := false
+    if _new_point and not na(zz_last_price)
+        // Only connect if alternating (high→low or low→high)
+        if _new_is_hi != zz_last_was_high
+            // Determine storyline direction from this segment
+            _seg_dir = _new_is_hi ? 1 : -1
+            _zz_col = _seg_dir > 0 ? i_zz_bull_col : i_zz_bear_col
+            // Create zigzag point
+            pt = StoryZigzag.new()
+            pt.price    := _new_price
+            pt.bar_idx  := _new_bar
+            pt.is_high  := _new_is_hi
+            pt.story_dir := _seg_dir
+            pt.ln       := line.new(zz_last_bar, zz_last_price, _new_bar, _new_price, color=_zz_col, width=i_zz_width, style=line.style_solid)
+            zz_pts.push(pt)
+            zz_last_price   := _new_price
+            zz_last_bar     := _new_bar
+            zz_last_was_high := _new_is_hi
+    else if _new_point and na(zz_last_price)
+        // First point — just store it
+        zz_last_price   := _new_price
+        zz_last_bar     := _new_bar
+        zz_last_was_high := _new_is_hi
 
-// Cap trendlines
-while trendlines.size() > 20
-    old = trendlines.shift()
+// ─── Zigzag Storyline Change Detection ───
+// When direction flips (e.g. was making HH/HL, now makes LH/LL), mark storyline change
+var int zz_prev_dir = 0
+if zz_pts.size() >= 2
+    _last_pt = zz_pts.get(zz_pts.size() - 1)
+    _prev_pt = zz_pts.get(zz_pts.size() - 2)
+    // Detect direction change
+    if _last_pt.story_dir != zz_prev_dir and zz_prev_dir != 0 and barstate.isconfirmed
+        // Storyline changed — mark the transition point
+        _trans_txt = _last_pt.story_dir > 0 ? "▲ New Bull" : "▼ New Bear"
+        _trans_col = _last_pt.story_dir > 0 ? i_zz_bull_col : i_zz_bear_col
+        _last_pt.lbl := label.new(_last_pt.bar_idx, _last_pt.price, _trans_txt, color=color.new(_trans_col, 40), textcolor=_trans_col, style=_last_pt.is_high ? label.style_label_down : label.style_label_up, size=size.small)
+    zz_prev_dir := _last_pt.story_dir
+
+// Cap zigzag points (keep last 40)
+while zz_pts.size() > 40
+    old = zz_pts.shift()
     if not na(old.ln)
         line.delete(old.ln)
-    if not na(old.lbl3)
-        label.delete(old.lbl3)
+    if not na(old.lbl)
+        label.delete(old.lbl)
 
 // ╔══════════════════════════════════════════════════════════════════════════════╗
 // ║          MODULE 2: BREAKOUTS & PATTERN DETECTION                            ║
@@ -781,21 +754,23 @@ if current_phase == "start" and bar_index - phase_start_bar > 20
         if dominant_dir == -1 and _last_sh < _prev_sh and _last_sl < _prev_sl
             current_phase := "middle"
 
-// Ending Phase: price reaches major HTF level or trendline exhaustion
+// Ending Phase: price reaches major HTF level or storyline exhaustion
 if current_phase == "middle"
     // Check proximity to Monthly/Weekly SNR
     _near_m_res = not na(m_res_lvl) and math.abs(close - m_res_lvl) < atr_val * 3
     _near_m_sup = not na(m_sup_lvl) and math.abs(close - m_sup_lvl) < atr_val * 3
     _near_w_res = not na(w_res_lvl) and math.abs(close - w_res_lvl) < atr_val * 3
     _near_w_sup = not na(w_sup_lvl) and math.abs(close - w_sup_lvl) < atr_val * 3
-    // Check trendline exhaustion
-    _tl_exhausted = false
-    if trendlines.size() > 0
-        for i = trendlines.size() - 1 to 0
-            if trendlines.get(i).touches >= i_tl_max - 1
-                _tl_exhausted := true
-                break
-    if _near_m_res or _near_m_sup or _near_w_res or _near_w_sup or _tl_exhausted
+    // Check zigzag storyline exhaustion (multiple direction changes in recent points)
+    _zz_exhausted = false
+    if zz_pts.size() >= 4
+        _changes = 0
+        for i = zz_pts.size() - 1 to math.max(0, zz_pts.size() - 4)
+            if i > 0 and zz_pts.get(i).story_dir != zz_pts.get(i - 1).story_dir
+                _changes += 1
+        if _changes >= 2
+            _zz_exhausted := true
+    if _near_m_res or _near_m_sup or _near_w_res or _near_w_sup or _zz_exhausted
         current_phase := "ending"
 
 // Reset phase if new QM forms
@@ -958,86 +933,53 @@ ltf_mini_qm   := false
 ltf_ema_break  := false
 ltf_trigger_price := na
 
-if in_entry_zone and chart_tf_sec > 60
-    // ─── 1. Candle Rejection (Engulfing on LTF intrabar data) ───
-    if ltf_5m_valid and ltf_5m_c.size() > 1
-        for k = 1 to ltf_5m_c.size() - 1
-            _c = ltf_5m_c.get(k)
-            _o = ltf_5m_o.get(k)
-            _c_prev = ltf_5m_c.get(k - 1)
-            _o_prev = ltf_5m_o.get(k - 1)
-            _h = ltf_5m_h.get(k)
-            _l = ltf_5m_l.get(k)
-            _body = math.abs(_c - _o)
-            _range = _h - _l
-            _body_ratio = _range > 0 ? _body / _range : 0
-            // Bullish engulfing rejecting support
-            if active_setup_dir == "bull" and _c > _o and _c_prev < _o_prev and _body > math.abs(_c_prev - _o_prev) and _body_ratio > 0.6
-                ltf_engulfing := true
-                ltf_trigger_price := _c
-                break
-            // Bearish engulfing rejecting resistance
-            if active_setup_dir == "bear" and _c < _o and _c_prev > _o_prev and _body > math.abs(_c_prev - _o_prev) and _body_ratio > 0.6
-                ltf_engulfing := true
-                ltf_trigger_price := _c
-                break
+if in_entry_zone
+    // ─── 1. Candle Rejection (Engulfing on 5M data) ───
+    if not na(m5_c_ltf) and not na(m5_c1_ltf)
+        _body_cur = math.abs(m5_c_ltf - m5_o_ltf)
+        _body_prev = math.abs(m5_c1_ltf - m5_o1_ltf)
+        _range_cur = m5_h_ltf - m5_l_ltf
+        _body_ratio = _range_cur > 0 ? _body_cur / _range_cur : 0
+        // Bullish engulfing
+        if active_setup_dir == "bull" and m5_c_ltf > m5_o_ltf and m5_c1_ltf < m5_o1_ltf and _body_cur > _body_prev and _body_ratio > 0.6
+            ltf_engulfing := true
+            ltf_trigger_price := m5_c_ltf
+        // Bearish engulfing
+        if active_setup_dir == "bear" and m5_c_ltf < m5_o_ltf and m5_c1_ltf > m5_o1_ltf and _body_cur > _body_prev and _body_ratio > 0.6
+            ltf_engulfing := true
+            ltf_trigger_price := m5_c_ltf
 
-    // ─── 2. Breaking Gap on LTF ───
-    if ltf_5m_valid and ltf_5m_c.size() > 2
-        for k = 1 to ltf_5m_c.size() - 1
-            _h = ltf_5m_h.get(k)
-            _l = ltf_5m_l.get(k)
-            _h_prev = ltf_5m_h.get(k - 1)
-            _l_prev = ltf_5m_l.get(k - 1)
-            // Gap up then fill
-            if _l > _h_prev
-                // Check if next bar fills the gap
-                if k < ltf_5m_c.size() - 1
-                    _l_next = ltf_5m_l.get(k + 1)
-                    if _l_next <= _h_prev
-                        ltf_gap_break := true
-                        ltf_trigger_price := na(ltf_trigger_price) ? _h_prev : ltf_trigger_price
-                        break
-            // Gap down then fill
-            if _h < _l_prev
-                if k < ltf_5m_c.size() - 1
-                    _h_next = ltf_5m_h.get(k + 1)
-                    if _h_next >= _l_prev
-                        ltf_gap_break := true
-                        ltf_trigger_price := na(ltf_trigger_price) ? _l_prev : ltf_trigger_price
-                        break
+    // ─── 2. Breaking Gap on 5M ───
+    if not na(m5_h_ltf) and not na(m5_h1_ltf)
+        // Gap up: current low > previous high
+        if m5_l_ltf > m5_h1_ltf
+            ltf_gap_break := true
+            ltf_trigger_price := na(ltf_trigger_price) ? m5_h1_ltf : ltf_trigger_price
+        // Gap down: current high < previous low
+        if m5_h_ltf < m5_l1_ltf
+            ltf_gap_break := true
+            ltf_trigger_price := na(ltf_trigger_price) ? m5_l1_ltf : ltf_trigger_price
 
-    // ─── 3. Mini QM on 1M/5M ───
-    // Simplified: look for 3-point reversal (H-L-HH or L-H-LL) in intrabar data
-    if ltf_1m_valid and ltf_1m_c.size() > 5
-        _max1 = -999999.0
-        _min1 = 999999.0
-        _max2 = -999999.0
-        _min2 = 999999.0
-        _half = math.floor(ltf_1m_c.size() / 2)
-        for k = 0 to _half - 1
-            _max1 := math.max(_max1, ltf_1m_h.get(k))
-            _min1 := math.min(_min1, ltf_1m_l.get(k))
-        for k = _half to ltf_1m_c.size() - 1
-            _max2 := math.max(_max2, ltf_1m_h.get(k))
-            _min2 := math.min(_min2, ltf_1m_l.get(k))
-        // Bullish mini QM: first half makes lower low, second half makes higher high
-        if active_setup_dir == "bull" and _min1 < _min2 and _max2 > _max1
+    // ─── 3. Mini QM on 1M ───
+    // Simplified: check if 1M shows reversal pattern (A/V shape forming)
+    if not na(m1_c_ltf) and not na(m1_c1_ltf)
+        // Bullish mini reversal: bearish then bullish on 1M
+        if active_setup_dir == "bull" and m1_c1_ltf < m1_o1_ltf and m1_c_ltf > m1_o_ltf
             ltf_mini_qm := true
-        // Bearish mini QM: first half makes higher high, second half makes lower low
-        if active_setup_dir == "bear" and _max1 > _max2 and _min2 < _min1
+        // Bearish mini reversal: bullish then bearish on 1M
+        if active_setup_dir == "bear" and m1_c1_ltf > m1_o1_ltf and m1_c_ltf < m1_o_ltf
             ltf_mini_qm := true
 
     // ─── 4. 5M EMA Break ───
-    if not na(m5_cl) and not na(m5_ema_val) and not na(m5_op)
-        _m5_body = math.abs(m5_cl - m5_op)
-        _m5_range = m5_hi - m5_lo
+    if not na(m5_c_ltf) and not na(m5_ema_ltf)
+        _m5_body = math.abs(m5_c_ltf - m5_o_ltf)
+        _m5_range = m5_h_ltf - m5_l_ltf
         _m5_body_ratio = _m5_range > 0 ? _m5_body / _m5_range : 0
         // Bullish: engulfing close above EMA
-        if active_setup_dir == "bull" and m5_cl > m5_op and m5_cl > m5_ema_val and m5_op < m5_ema_val and _m5_body_ratio > 0.5
+        if active_setup_dir == "bull" and m5_c_ltf > m5_o_ltf and m5_c_ltf > m5_ema_ltf and m5_o_ltf < m5_ema_ltf and _m5_body_ratio > 0.5
             ltf_ema_break := true
         // Bearish: engulfing close below EMA
-        if active_setup_dir == "bear" and m5_cl < m5_op and m5_cl < m5_ema_val and m5_op > m5_ema_val and _m5_body_ratio > 0.5
+        if active_setup_dir == "bear" and m5_c_ltf < m5_o_ltf and m5_c_ltf < m5_ema_ltf and m5_o_ltf > m5_ema_ltf and _m5_body_ratio > 0.5
             ltf_ema_break := true
 
 // ─── Sniper Score Calculator ("Proximity is Power") ───
