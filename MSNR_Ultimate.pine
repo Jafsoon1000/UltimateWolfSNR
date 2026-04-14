@@ -1,0 +1,1187 @@
+//@version=5
+indicator("MSNR Ultimate v1.0", "MSNR Ultimate", overlay=true,
+  max_lines_count=500, max_labels_count=500, max_boxes_count=500,
+  max_bars_back=5000)
+
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║                              INPUTS                                         ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+// ─── Module 1: Foundation (SNR & Trendlines) ───
+grp1          = "═══ Module 1: Foundation ═══"
+i_show_ashape = input.bool(true, "Show A-Shape Levels (Resistance)", group=grp1)
+i_show_vshape = input.bool(true, "Show V-Shape Levels (Support)", group=grp1)
+i_show_gaps   = input.bool(true, "Show Gap Levels", group=grp1)
+i_fresh_res   = input.color(#FF4444, "Fresh Resistance Color", group=grp1)
+i_fresh_sup   = input.color(#00E676, "Fresh Support Color", group=grp1)
+i_gap_col     = input.color(#FFD740, "Gap Zone Color", group=grp1)
+i_unfresh_col = input.color(#555555, "Unfresh Level Color", group=grp1)
+i_max_levels  = input.int(25, "Max Active Levels", minval=5, maxval=50, group=grp1)
+i_show_tl     = input.bool(true, "Show Trendlines", group=grp1)
+i_tl_max      = input.int(5, "Trendline Max Touches", minval=2, maxval=10, group=grp1)
+
+// ─── Module 2: Breakouts & Patterns ───
+grp2          = "═══ Module 2: Breakouts & QM ═══"
+i_piv_left    = input.int(5, "Pivot Left Bars", minval=2, maxval=20, group=grp2)
+i_piv_right   = input.int(5, "Pivot Right Bars", minval=2, maxval=20, group=grp2)
+i_show_bos    = input.bool(true, "Show BOS Labels", group=grp2)
+i_show_qm     = input.bool(true, "Show QM Patterns", group=grp2)
+i_qm_col      = input.color(#FF6D00, "QM Pattern Color", group=grp2)
+
+// ─── Module 3: MTF Storyline ───
+grp3          = "═══ Module 3: MTF Storyline ═══"
+i_show_dash   = input.bool(true, "Show Dashboard", group=grp3)
+i_dash_pos    = input.string("Top Right", "Dashboard Position", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group=grp3)
+i_show_phase  = input.bool(true, "Show Phase Background", group=grp3)
+i_phase_alpha = input.int(92, "Phase BG Opacity (0-100)", minval=0, maxval=100, group=grp3)
+
+// ─── Module 4: Setup & Entry ───
+grp4          = "═══ Module 4: Setup Engine ═══"
+i_show_setups = input.bool(true, "Show Setup Lines", group=grp4)
+i_refinement  = input.bool(true, "Enable Refinement Algorithm", group=grp4)
+i_alert_setup = input.bool(true, "Alert on Setup", group=grp4)
+
+// ─── Module 5: LTF Confirmations ───
+grp5          = "═══ Module 5: LTF Triggers ═══"
+i_ema_len     = input.int(5, "LTF EMA Length", minval=2, maxval=20, group=grp5)
+i_show_sniper = input.bool(true, "Show Sniper Score", group=grp5)
+i_min_score   = input.int(5, "Min Score for Alert", minval=1, maxval=10, group=grp5)
+
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║                          TYPE DEFINITIONS                                   ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+type Level
+    float price    = na
+    int   bar_idx  = 0
+    bool  is_fresh = true
+    int   touches  = 0
+    string ltype   = ""     // "A", "V", "GAP"
+    float  gap_hi  = na
+    float  gap_lo  = na
+    line   ln      = na
+    label  lbl     = na
+    box    bx      = na
+
+type TLine
+    float p1      = na
+    int   b1      = 0
+    float p2      = na
+    int   b2      = 0
+    int   touches = 0
+    bool  is_res  = true
+    bool  broken  = false
+    line  ln      = na
+    label lbl3    = na      // 3rd touch label
+
+type QM
+    string dir     = ""    // "bull" or "bear"
+    float  sh1     = na    // swing high 1
+    float  sl1     = na    // swing low 1
+    float  sh2     = na    // swing high 2
+    float  sl2     = na    // swing low 2
+    int    sh1_bar = 0
+    int    sl1_bar = 0
+    int    sh2_bar = 0
+    int    sl2_bar = 0
+    float  apex    = na
+    float  ls_val  = na
+    float  sbr     = na
+    float  ers_val = na
+    int    apex_bar = 0
+    int    ls_bar   = 0
+    int    sbr_bar  = 0
+    int    ers_bar  = 0
+    bool   active  = true
+    line   ln1     = na
+    line   ln2     = na
+    line   ln3     = na
+    line   ln_apex = na
+    line   ln_ls   = na
+    line   ln_sbr  = na
+    line   ln_ers  = na
+    label  la_apex = na
+    label  la_ls   = na
+    label  la_sbr  = na
+    label  la_ers  = na
+
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║                         UTILITY FUNCTIONS                                   ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+f_is_bullish(int i) => close[i] > open[i]
+f_is_bearish(int i) => close[i] < open[i]
+
+f_body_top(int i)  => math.max(close[i], open[i])
+f_body_bot(int i)  => math.min(close[i], open[i])
+
+f_body_size(int i) => math.abs(close[i] - open[i])
+f_wick_top(int i)  => high[i] - f_body_top(i)
+f_wick_bot(int i)  => f_body_bot(i) - low[i]
+f_range(int i)     => high[i] - low[i]
+
+// Check if a candle's body or wick interacts with a level
+f_body_breaks_above(_price, int i) => f_body_top(i) > _price and f_body_bot(i) > _price
+f_body_breaks_below(_price, int i) => f_body_bot(i) < _price and f_body_top(i) < _price
+f_wick_touches(_price, int i)      => high[i] >= _price and low[i] <= _price and not f_body_breaks_above(_price, i) and not f_body_breaks_below(_price, i)
+
+// ATR for tolerance calculations
+atr_val = ta.atr(14)
+
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║                 GLOBAL REQUEST.SECURITY CALLS                               ║
+// ║    (All request.* calls must be at global scope in Pine Script v5)          ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+// ─── HTF A-Shape / V-Shape detection functions (evaluated inside request.security) ───
+f_htf_latest_a() =>
+    var float _res = na
+    if close[1] > open[1] and close < open
+        _res := math.max(close[1], open)
+    _res
+
+f_htf_latest_v() =>
+    var float _sup = na
+    if close[1] < open[1] and close > open
+        _sup := math.min(close[1], open)
+    _sup
+
+f_htf_story_dir() =>
+    var int _dir = 0
+    var float _last_a = na
+    var float _last_v = na
+    if close[1] > open[1] and close < open
+        _last_a := math.max(close[1], open)
+    if close[1] < open[1] and close > open
+        _last_v := math.min(close[1], open)
+    if not na(_last_a) and close > _last_a
+        _dir := 1
+        _last_a := na
+    if not na(_last_v) and close < _last_v
+        _dir := -1
+        _last_v := na
+    _dir
+
+// ─── Must call locally to maintain series (Pine requirement) ───
+_local_a = f_htf_latest_a()
+_local_v = f_htf_latest_v()
+_local_d = f_htf_story_dir()
+
+// ─── MTF Data (Calls 1-5) ───
+[m_res_lvl, m_sup_lvl, m_story] = request.security(syminfo.tickerid, "M",  [f_htf_latest_a(), f_htf_latest_v(), f_htf_story_dir()], lookahead=barmerge.lookahead_off)
+[w_res_lvl, w_sup_lvl, w_story] = request.security(syminfo.tickerid, "W",  [f_htf_latest_a(), f_htf_latest_v(), f_htf_story_dir()], lookahead=barmerge.lookahead_off)
+[d_res_lvl, d_sup_lvl, d_story] = request.security(syminfo.tickerid, "D",  [f_htf_latest_a(), f_htf_latest_v(), f_htf_story_dir()], lookahead=barmerge.lookahead_off)
+[h4_close_htf, h4_open_htf]     = request.security(syminfo.tickerid, "240", [close, open], lookahead=barmerge.lookahead_off)
+[h1_close_htf, h1_open_htf]     = request.security(syminfo.tickerid, "60",  [close, open], lookahead=barmerge.lookahead_off)
+
+// ─── Confirmation TF closes (Calls 6-7) ───
+d_close_htf = request.security(syminfo.tickerid, "D",   close, lookahead=barmerge.lookahead_off)
+// h4 and h1 close already fetched above
+
+// ─── LTF Data (Calls 8-9) ───
+[m5_cl, m5_op, m5_hi, m5_lo, m5_ema_val] = request.security(syminfo.tickerid, "5",
+  [close, open, high, low, ta.ema(close, i_ema_len)], lookahead=barmerge.lookahead_off)
+
+[m1_cl, m1_op, m1_hi, m1_lo] = request.security(syminfo.tickerid, "1",
+  [close, open, high, low], lookahead=barmerge.lookahead_off)
+
+// ─── LTF Intrabar Data ───
+chart_tf_sec = timeframe.in_seconds()
+
+// Intrabar arrays for 1M and 5M (only valid when chart TF > these)
+[ltf_1m_o, ltf_1m_h, ltf_1m_l, ltf_1m_c] = request.security_lower_tf(syminfo.tickerid, "1",  [open, high, low, close])
+[ltf_5m_o, ltf_5m_h, ltf_5m_l, ltf_5m_c] = request.security_lower_tf(syminfo.tickerid, "5",  [open, high, low, close])
+
+// 30M and 15M use regular request.security (safe on ANY chart timeframe)
+[m30_c, m30_o, m30_h, m30_l, m30_c1, m30_o1, m30_h1, m30_l1] = request.security(syminfo.tickerid, "30", [close, open, high, low, close[1], open[1], high[1], low[1]], lookahead=barmerge.lookahead_off)
+[m15_c, m15_o, m15_h, m15_l, m15_c1, m15_o1, m15_h1, m15_l1] = request.security(syminfo.tickerid, "15", [close, open, high, low, close[1], open[1], high[1], low[1]], lookahead=barmerge.lookahead_off)
+
+// Timeframe validity flags for intrabar data
+ltf_1m_valid = chart_tf_sec > 60
+ltf_5m_valid = chart_tf_sec > 300
+
+// Total: 15 request.* calls — well within 40 limit ✓
+
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║            MODULE 1: FOUNDATION — SNR Detection & Trendlines                ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+// ─── State Arrays ───
+var levels     = array.new<Level>()
+var trendlines = array.new<TLine>()
+
+// Previous A/V shape tracking for trendlines
+var float prev_a_price = na
+var int   prev_a_bar   = 0
+var float prev_v_price = na
+var int   prev_v_bar   = 0
+
+// ─── A-Shape Detection (Resistance) ───
+// Bullish candle followed by bearish candle → peak
+is_a_shape = f_is_bullish(1) and f_is_bearish(0)
+a_shape_price = is_a_shape ? math.max(close[1], open) : na
+
+if is_a_shape and i_show_ashape and barstate.isconfirmed
+    lvl = Level.new()
+    lvl.price   := a_shape_price
+    lvl.bar_idx := bar_index - 1
+    lvl.ltype   := "A"
+    lvl.ln      := line.new(bar_index - 1, a_shape_price, bar_index + 50, a_shape_price,
+                     color=i_fresh_res, style=line.style_solid, width=2)
+    lvl.lbl     := label.new(bar_index - 1, a_shape_price, "🔴 A",
+                     color=color.new(i_fresh_res, 80), textcolor=i_fresh_res,
+                     style=label.style_label_down, size=size.small)
+    levels.push(lvl)
+    // Trendline: connect with previous A-shape
+    if i_show_tl and not na(prev_a_price)
+        tl = TLine.new()
+        tl.p1     := prev_a_price
+        tl.b1     := prev_a_bar
+        tl.p2     := a_shape_price
+        tl.b2     := bar_index - 1
+        tl.is_res := true
+        tl.ln     := line.new(prev_a_bar, prev_a_price, bar_index - 1, a_shape_price,
+                       color=#2196F3, style=line.style_solid, width=2, extend=extend.right)
+        trendlines.push(tl)
+    prev_a_price := a_shape_price
+    prev_a_bar   := bar_index - 1
+
+// ─── V-Shape Detection (Support) ───
+// Bearish candle followed by bullish candle → trough
+is_v_shape = f_is_bearish(1) and f_is_bullish(0)
+v_shape_price = is_v_shape ? math.min(close[1], open) : na
+
+if is_v_shape and i_show_vshape and barstate.isconfirmed
+    lvl = Level.new()
+    lvl.price   := v_shape_price
+    lvl.bar_idx := bar_index - 1
+    lvl.ltype   := "V"
+    lvl.ln      := line.new(bar_index - 1, v_shape_price, bar_index + 50, v_shape_price,
+                     color=i_fresh_sup, style=line.style_solid, width=2)
+    lvl.lbl     := label.new(bar_index - 1, v_shape_price, "🟢 V",
+                     color=color.new(i_fresh_sup, 80), textcolor=i_fresh_sup,
+                     style=label.style_label_up, size=size.small)
+    levels.push(lvl)
+    // Trendline: connect with previous V-shape
+    if i_show_tl and not na(prev_v_price)
+        tl = TLine.new()
+        tl.p1     := prev_v_price
+        tl.b1     := prev_v_bar
+        tl.p2     := v_shape_price
+        tl.b2     := bar_index - 1
+        tl.is_res := false
+        tl.ln     := line.new(prev_v_bar, prev_v_price, bar_index - 1, v_shape_price,
+                       color=#2196F3, style=line.style_solid, width=2, extend=extend.right)
+        trendlines.push(tl)
+    prev_v_price := v_shape_price
+    prev_v_bar   := bar_index - 1
+
+// ─── Gap Detection ───
+bull_gap = f_is_bullish(1) and f_is_bullish(0) and low > high[1]
+bear_gap = f_is_bearish(1) and f_is_bearish(0) and high < low[1]
+
+if bull_gap and i_show_gaps and barstate.isconfirmed
+    lvl = Level.new()
+    lvl.price   := (high[1] + low) / 2
+    lvl.bar_idx := bar_index - 1
+    lvl.ltype   := "GAP"
+    lvl.gap_hi  := low
+    lvl.gap_lo  := high[1]
+    lvl.bx      := box.new(bar_index - 1, low, bar_index + 30, high[1],
+                     bgcolor=color.new(i_gap_col, 85), border_color=i_gap_col, border_width=1)
+    lvl.lbl     := label.new(bar_index, (high[1] + low) / 2, "GAP▲",
+                     color=color.new(i_gap_col, 80), textcolor=i_gap_col,
+                     style=label.style_label_center, size=size.tiny)
+    levels.push(lvl)
+
+if bear_gap and i_show_gaps and barstate.isconfirmed
+    lvl = Level.new()
+    lvl.price   := (low[1] + high) / 2
+    lvl.bar_idx := bar_index - 1
+    lvl.ltype   := "GAP"
+    lvl.gap_hi  := low[1]
+    lvl.gap_lo  := high
+    lvl.bx      := box.new(bar_index - 1, low[1], bar_index + 30, high,
+                     bgcolor=color.new(i_gap_col, 85), border_color=i_gap_col, border_width=1)
+    lvl.lbl     := label.new(bar_index, (low[1] + high) / 2, "GAP▼",
+                     color=color.new(i_gap_col, 80), textcolor=i_gap_col,
+                     style=label.style_label_center, size=size.tiny)
+    levels.push(lvl)
+
+// ─── Freshness Filter (runs every bar) ───
+if levels.size() > 0
+    int _rm = -1
+    for i = levels.size() - 1 to 0
+        lvl = levels.get(i)
+        if na(lvl.price)
+            continue
+        // Skip bars where the level was just created
+        if bar_index <= lvl.bar_idx + 1
+            continue
+        _is_res  = lvl.ltype == "A" or (lvl.ltype == "GAP" and not na(lvl.gap_hi))
+        _price   = lvl.price
+        // Check if body broke through → remove level
+        if _is_res and f_body_breaks_above(_price, 0)
+            if not na(lvl.ln)
+                line.delete(lvl.ln)
+            if not na(lvl.lbl)
+                label.delete(lvl.lbl)
+            if not na(lvl.bx)
+                box.delete(lvl.bx)
+            levels.remove(i)
+            continue
+        if not _is_res and f_body_breaks_below(_price, 0)
+            if not na(lvl.ln)
+                line.delete(lvl.ln)
+            if not na(lvl.lbl)
+                label.delete(lvl.lbl)
+            if not na(lvl.bx)
+                box.delete(lvl.bx)
+            levels.remove(i)
+            continue
+        // Check if wick touched → unfresh
+        if f_wick_touches(_price, 0) and lvl.is_fresh
+            lvl.is_fresh := false
+            lvl.touches  += 1
+            if not na(lvl.ln)
+                line.set_color(lvl.ln, i_unfresh_col)
+                line.set_style(lvl.ln, line.style_dashed)
+                line.set_width(lvl.ln, 1)
+            if not na(lvl.lbl)
+                label.set_textcolor(lvl.lbl, i_unfresh_col)
+                label.set_text(lvl.lbl, lvl.ltype == "A" ? "A (tested)" : lvl.ltype == "V" ? "V (tested)" : "GAP (tested)")
+            if not na(lvl.bx)
+                box.set_border_color(lvl.bx, i_unfresh_col)
+                box.set_bgcolor(lvl.bx, color.new(i_unfresh_col, 90))
+        // Extend active level lines
+        if not na(lvl.ln)
+            line.set_x2(lvl.ln, bar_index + 10)
+        if not na(lvl.bx)
+            box.set_right(lvl.bx, bar_index + 10)
+
+// ─── Cap active levels ───
+while levels.size() > i_max_levels
+    old = levels.shift()
+    if not na(old.ln)
+        line.delete(old.ln)
+    if not na(old.lbl)
+        label.delete(old.lbl)
+    if not na(old.bx)
+        box.delete(old.bx)
+
+// ─── Trendline Touch Tracking ───
+if trendlines.size() > 0
+    for i = trendlines.size() - 1 to 0
+        tl = trendlines.get(i)
+        if tl.broken or tl.b2 == tl.b1
+            continue
+        // Calculate trendline value at current bar
+        _slope = (tl.p2 - tl.p1) / (tl.b2 - tl.b1)
+        _tl_val = tl.p2 + _slope * (bar_index - tl.b2)
+        _tol = atr_val * 0.15
+        // Resistance trendline
+        if tl.is_res
+            if high >= _tl_val - _tol and high <= _tl_val + _tol and close < _tl_val
+                tl.touches += 1
+                if tl.touches == 3
+                    tl.lbl3 := label.new(bar_index, _tl_val, "⚡3rd",
+                                 color=color.new(#FF9800, 60), textcolor=#FF9800,
+                                 style=label.style_label_down, size=size.small)
+                    line.set_color(tl.ln, #FF9800)
+                    line.set_width(tl.ln, 3)
+            // Broken = body closes above
+            if close > _tl_val + _tol
+                tl.broken := true
+                line.set_style(tl.ln, line.style_dotted)
+                line.set_color(tl.ln, i_unfresh_col)
+                line.set_extend(tl.ln, extend.none)
+                line.set_x2(tl.ln, bar_index)
+        else
+            // Support trendline
+            if low >= _tl_val - _tol and low <= _tl_val + _tol and close > _tl_val
+                tl.touches += 1
+                if tl.touches == 3
+                    tl.lbl3 := label.new(bar_index, _tl_val, "⚡3rd",
+                                 color=color.new(#FF9800, 60), textcolor=#FF9800,
+                                 style=label.style_label_up, size=size.small)
+                    line.set_color(tl.ln, #FF9800)
+                    line.set_width(tl.ln, 3)
+            if close < _tl_val - _tol
+                tl.broken := true
+                line.set_style(tl.ln, line.style_dotted)
+                line.set_color(tl.ln, i_unfresh_col)
+                line.set_extend(tl.ln, extend.none)
+                line.set_x2(tl.ln, bar_index)
+        // Remove exhausted trendlines (>max touches)
+        if tl.touches >= i_tl_max
+            tl.broken := true
+            line.set_style(tl.ln, line.style_dotted)
+            line.set_extend(tl.ln, extend.none)
+
+// Cap trendlines
+while trendlines.size() > 20
+    old = trendlines.shift()
+    if not na(old.ln)
+        line.delete(old.ln)
+    if not na(old.lbl3)
+        label.delete(old.lbl3)
+
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║          MODULE 2: BREAKOUTS & PATTERN DETECTION                            ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+// ─── Swing Point Engine ───
+var swing_hi_vals = array.new_float()
+var swing_hi_bars = array.new_int()
+var swing_lo_vals = array.new_float()
+var swing_lo_bars = array.new_int()
+
+ph = ta.pivothigh(high, i_piv_left, i_piv_right)
+pl = ta.pivotlow(low,  i_piv_left, i_piv_right)
+
+if not na(ph)
+    swing_hi_vals.push(ph)
+    swing_hi_bars.push(bar_index - i_piv_right)
+    if swing_hi_vals.size() > 20
+        swing_hi_vals.shift()
+        swing_hi_bars.shift()
+
+if not na(pl)
+    swing_lo_vals.push(pl)
+    swing_lo_bars.push(bar_index - i_piv_right)
+    if swing_lo_vals.size() > 20
+        swing_lo_vals.shift()
+        swing_lo_bars.shift()
+
+// ─── Valid Breakout Filter ───
+// Track last A-shape and V-shape for breakout reference
+var float last_a_for_bos = na
+var int   last_a_bar_bos = 0
+var float last_v_for_bos = na
+var int   last_v_bar_bos = 0
+
+if is_a_shape
+    last_a_for_bos := a_shape_price
+    last_a_bar_bos := bar_index - 1
+
+if is_v_shape
+    last_v_for_bos := v_shape_price
+    last_v_bar_bos := bar_index - 1
+
+// External breakout detection
+var int last_bos_bar = 0
+ext_bull_bos = not na(last_a_for_bos) and close > last_a_for_bos and close[1] <= last_a_for_bos and bar_index - last_bos_bar > 3
+ext_bear_bos = not na(last_v_for_bos) and close < last_v_for_bos and close[1] >= last_v_for_bos and bar_index - last_bos_bar > 3
+
+// Internal breakout: body crosses any level between swings (simplified)
+// We flag internal breaks as lesser signals
+var float int_bos_price = na
+int_bull = false
+int_bear = false
+if swing_hi_vals.size() >= 2 and swing_lo_vals.size() >= 2
+    _prev_hi = swing_hi_vals.get(swing_hi_vals.size() - 2)
+    _last_hi = swing_hi_vals.get(swing_hi_vals.size() - 1)
+    _prev_lo = swing_lo_vals.get(swing_lo_vals.size() - 2)
+    _last_lo = swing_lo_vals.get(swing_lo_vals.size() - 1)
+    // Internal: breaks previous swing high/low but not the last A/V shape
+    int_bull := close > _prev_hi and close[1] <= _prev_hi and not ext_bull_bos
+    int_bear := close < _prev_lo and close[1] >= _prev_lo and not ext_bear_bos
+
+// Draw BOS labels
+if ext_bull_bos and i_show_bos and barstate.isconfirmed
+    label.new(bar_index, low, "▲ BOS",
+      color=color.new(#E040FB, 60), textcolor=#E040FB,
+      style=label.style_label_up, size=size.normal)
+    last_bos_bar    := bar_index
+    last_a_for_bos  := na
+
+if ext_bear_bos and i_show_bos and barstate.isconfirmed
+    label.new(bar_index, high, "▼ BOS",
+      color=color.new(#E040FB, 60), textcolor=#E040FB,
+      style=label.style_label_down, size=size.normal)
+    last_bos_bar    := bar_index
+    last_v_for_bos  := na
+
+if int_bull and i_show_bos and barstate.isconfirmed
+    label.new(bar_index, low, "int▲",
+      color=color.new(#888888, 70), textcolor=#999999,
+      style=label.style_label_up, size=size.tiny)
+
+if int_bear and i_show_bos and barstate.isconfirmed
+    label.new(bar_index, high, "int▼",
+      color=color.new(#888888, 70), textcolor=#999999,
+      style=label.style_label_down, size=size.tiny)
+
+// ─── Quasimodo (QM) Scanner ───
+var qm_patterns = array.new<QM>()
+var int last_qm_bar = 0
+
+// Need at least 4 alternating swing points
+// Bearish QM: SH1, SL1, SH2(>SH1), SL2(<SL1) — H,L,HH,LL
+// Bullish QM: SL1, SH1, SL2(<SL1), SH2(>SH1) — L,H,LL,HH
+// We build a merged swing sequence to detect patterns
+
+if swing_hi_vals.size() >= 2 and swing_lo_vals.size() >= 2 and i_show_qm and barstate.isconfirmed
+    _sz_h = swing_hi_vals.size()
+    _sz_l = swing_lo_vals.size()
+
+    // ── Bearish QM check ──
+    // Need: H1, then L1 after H1, then H2 > H1 after L1, then L2 < L1 after H2
+    if _sz_h >= 2 and _sz_l >= 2
+        _h1 = swing_hi_vals.get(_sz_h - 2)
+        _h1b = swing_hi_bars.get(_sz_h - 2)
+        _h2 = swing_hi_vals.get(_sz_h - 1)
+        _h2b = swing_hi_bars.get(_sz_h - 1)
+        _l1_idx = -1
+        // Find L1 between H1 and H2
+        for j = _sz_l - 1 to 0
+            _lb = swing_lo_bars.get(j)
+            if _lb > _h1b and _lb < _h2b
+                _l1_idx := j
+                break
+        if _l1_idx >= 0
+            _l1 = swing_lo_vals.get(_l1_idx)
+            _l1b = swing_lo_bars.get(_l1_idx)
+            // Find L2 after H2 (could be the last swing low)
+            _l2_idx = -1
+            for j = _sz_l - 1 to 0
+                _lb = swing_lo_bars.get(j)
+                if _lb > _h2b
+                    _l2_idx := j
+                    break
+            if _l2_idx >= 0
+                _l2 = swing_lo_vals.get(_l2_idx)
+                _l2b = swing_lo_bars.get(_l2_idx)
+                // Validate: H2 > H1 (higher high) AND L2 < L1 (lower low)
+                if _h2 > _h1 and _l2 < _l1 and _l2b - _h1b < 100 and bar_index - last_qm_bar > 10
+                    qm = QM.new()
+                    qm.dir     := "bear"
+                    qm.sh1     := _h1
+                    qm.sl1     := _l1
+                    qm.sh2     := _h2
+                    qm.sl2     := _l2
+                    qm.sh1_bar := _h1b
+                    qm.sl1_bar := _l1b
+                    qm.sh2_bar := _h2b
+                    qm.sl2_bar := _l2b
+                    // Sub-levels
+                    qm.apex     := _h2
+                    qm.apex_bar := _h2b
+                    qm.ls_val   := _h1
+                    qm.ls_bar   := _h1b
+                    qm.sbr      := _l1      // SBR: L1 becomes resistance
+                    qm.sbr_bar  := _l1b
+                    // ERS: mini A-shape in 5 bars before L2
+                    for k = 1 to math.min(5, _l2b - _h2b)
+                        _ki = bar_index - _l2b + k
+                        if _ki >= 1 and _ki < 500
+                            if close[_ki+1] > open[_ki+1] and close[_ki] < open[_ki]
+                                qm.ers_val := math.max(math.max(close[_ki+1], open[_ki+1]), math.max(close[_ki], open[_ki]))
+                                qm.ers_bar := _l2b - k
+                                break
+                    // Draw pattern
+                    qm.ln1 := line.new(_h1b, _h1, _l1b, _l1, color=i_qm_col, width=2)
+                    qm.ln2 := line.new(_l1b, _l1, _h2b, _h2, color=i_qm_col, width=2)
+                    qm.ln3 := line.new(_h2b, _h2, _l2b, _l2, color=i_qm_col, width=2)
+                    // Sub-level lines
+                    qm.ln_apex := line.new(_h2b, _h2, bar_index + 20, _h2, color=#FFD700, style=line.style_dashed, width=2)
+                    qm.la_apex := label.new(_h2b, _h2, "APEX", color=color.new(#FFD700, 70), textcolor=#FFD700, style=label.style_label_down, size=size.small)
+                    qm.ln_ls   := line.new(_h1b, _h1, bar_index + 20, _h1, color=#42A5F5, style=line.style_dashed, width=1)
+                    qm.la_ls   := label.new(_h1b, _h1, "LS", color=color.new(#42A5F5, 70), textcolor=#42A5F5, style=label.style_label_down, size=size.tiny)
+                    qm.ln_sbr  := line.new(_l1b, _l1, bar_index + 20, _l1, color=#AB47BC, style=line.style_dashed, width=2)
+                    qm.la_sbr  := label.new(_l1b, _l1, "SBR", color=color.new(#AB47BC, 70), textcolor=#AB47BC, style=label.style_label_up, size=size.small)
+                    if not na(qm.ers_val)
+                        qm.ln_ers := line.new(qm.ers_bar, qm.ers_val, bar_index + 20, qm.ers_val, color=#00E5FF, style=line.style_dotted, width=1)
+                        qm.la_ers := label.new(qm.ers_bar, qm.ers_val, "ERS", color=color.new(#00E5FF, 70), textcolor=#00E5FF, style=label.style_label_down, size=size.tiny)
+                    qm_patterns.push(qm)
+                    last_qm_bar := bar_index
+
+    // ── Bullish QM check ──
+    // Need: L1, then H1 after L1, then L2 < L1 after H1, then H2 > H1 after L2
+    if _sz_h >= 2 and _sz_l >= 2
+        _l1_b = swing_lo_vals.get(_sz_l - 2)
+        _l1b_b = swing_lo_bars.get(_sz_l - 2)
+        _l2_b = swing_lo_vals.get(_sz_l - 1)
+        _l2b_b = swing_lo_bars.get(_sz_l - 1)
+        _h1_idx = -1
+        // Find H1 between L1 and L2
+        for j = _sz_h - 1 to 0
+            _hb = swing_hi_bars.get(j)
+            if _hb > _l1b_b and _hb < _l2b_b
+                _h1_idx := j
+                break
+        if _h1_idx >= 0
+            _h1_b = swing_hi_vals.get(_h1_idx)
+            _h1b_b = swing_hi_bars.get(_h1_idx)
+            // Find H2 after L2 (most recent swing high)
+            _h2_idx = -1
+            for j = _sz_h - 1 to 0
+                _hb = swing_hi_bars.get(j)
+                if _hb > _l2b_b
+                    _h2_idx := j
+                    break
+            if _h2_idx >= 0
+                _h2_b = swing_hi_vals.get(_h2_idx)
+                _h2b_b = swing_hi_bars.get(_h2_idx)
+                // Validate: L2 < L1 (lower low) AND H2 > H1 (higher high)
+                if _l2_b < _l1_b and _h2_b > _h1_b and _h2b_b - _l1b_b < 100 and bar_index - last_qm_bar > 10
+                    qm = QM.new()
+                    qm.dir     := "bull"
+                    qm.sl1     := _l1_b
+                    qm.sh1     := _h1_b
+                    qm.sl2     := _l2_b
+                    qm.sh2     := _h2_b
+                    qm.sl1_bar := _l1b_b
+                    qm.sh1_bar := _h1b_b
+                    qm.sl2_bar := _l2b_b
+                    qm.sh2_bar := _h2b_b
+                    // Sub-levels
+                    qm.apex     := _l2_b
+                    qm.apex_bar := _l2b_b
+                    qm.ls_val   := _l1_b
+                    qm.ls_bar   := _l1b_b
+                    qm.sbr      := _h1_b      // RBS: H1 becomes support
+                    qm.sbr_bar  := _h1b_b
+                    // ERS: mini V-shape in 5 bars before H2
+                    for k = 1 to math.min(5, _h2b_b - _l2b_b)
+                        _ki = bar_index - _h2b_b + k
+                        if _ki >= 1 and _ki < 500
+                            if close[_ki+1] < open[_ki+1] and close[_ki] > open[_ki]
+                                qm.ers_val := math.min(math.min(close[_ki+1], open[_ki+1]), math.min(close[_ki], open[_ki]))
+                                qm.ers_bar := _h2b_b - k
+                                break
+                    // Draw pattern
+                    qm.ln1 := line.new(_l1b_b, _l1_b, _h1b_b, _h1_b, color=i_qm_col, width=2)
+                    qm.ln2 := line.new(_h1b_b, _h1_b, _l2b_b, _l2_b, color=i_qm_col, width=2)
+                    qm.ln3 := line.new(_l2b_b, _l2_b, _h2b_b, _h2_b, color=i_qm_col, width=2)
+                    // Sub-level lines
+                    qm.ln_apex := line.new(_l2b_b, _l2_b, bar_index + 20, _l2_b, color=#FFD700, style=line.style_dashed, width=2)
+                    qm.la_apex := label.new(_l2b_b, _l2_b, "APEX", color=color.new(#FFD700, 70), textcolor=#FFD700, style=label.style_label_up, size=size.small)
+                    qm.ln_ls   := line.new(_l1b_b, _l1_b, bar_index + 20, _l1_b, color=#42A5F5, style=line.style_dashed, width=1)
+                    qm.la_ls   := label.new(_l1b_b, _l1_b, "LS", color=color.new(#42A5F5, 70), textcolor=#42A5F5, style=label.style_label_up, size=size.tiny)
+                    qm.ln_sbr  := line.new(_h1b_b, _h1_b, bar_index + 20, _h1_b, color=#AB47BC, style=line.style_dashed, width=2)
+                    qm.la_sbr  := label.new(_h1b_b, _h1_b, "RBS", color=color.new(#AB47BC, 70), textcolor=#AB47BC, style=label.style_label_down, size=size.small)
+                    if not na(qm.ers_val)
+                        qm.ln_ers := line.new(qm.ers_bar, qm.ers_val, bar_index + 20, qm.ers_val, color=#00E5FF, style=line.style_dotted, width=1)
+                        qm.la_ers := label.new(qm.ers_bar, qm.ers_val, "ERS", color=color.new(#00E5FF, 70), textcolor=#00E5FF, style=label.style_label_up, size=size.tiny)
+                    qm_patterns.push(qm)
+                    last_qm_bar := bar_index
+
+// ── QM Cleanup (max 5 active patterns) ──
+while qm_patterns.size() > 5
+    old = qm_patterns.shift()
+    if not na(old.ln1)
+        line.delete(old.ln1)
+    if not na(old.ln2)
+        line.delete(old.ln2)
+    if not na(old.ln3)
+        line.delete(old.ln3)
+    if not na(old.ln_apex)
+        line.delete(old.ln_apex)
+    if not na(old.ln_ls)
+        line.delete(old.ln_ls)
+    if not na(old.ln_sbr)
+        line.delete(old.ln_sbr)
+    if not na(old.ln_ers)
+        line.delete(old.ln_ers)
+    if not na(old.la_apex)
+        label.delete(old.la_apex)
+    if not na(old.la_ls)
+        label.delete(old.la_ls)
+    if not na(old.la_sbr)
+        label.delete(old.la_sbr)
+    if not na(old.la_ers)
+        label.delete(old.la_ers)
+
+// Extend active QM lines
+if qm_patterns.size() > 0
+    for i = 0 to qm_patterns.size() - 1
+        _qm = qm_patterns.get(i)
+        if _qm.active
+            if not na(_qm.ln_apex)
+                line.set_x2(_qm.ln_apex, bar_index + 10)
+            if not na(_qm.ln_ls)
+                line.set_x2(_qm.ln_ls, bar_index + 10)
+            if not na(_qm.ln_sbr)
+                line.set_x2(_qm.ln_sbr, bar_index + 10)
+            if not na(_qm.ln_ers)
+                line.set_x2(_qm.ln_ers, bar_index + 10)
+            // Invalidate if price moves too far from pattern
+            if _qm.dir == "bear" and close > _qm.apex * 1.02
+                _qm.active := false
+            if _qm.dir == "bull" and close < _qm.apex * 0.98
+                _qm.active := false
+
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║              MODULE 3: MTF STORYLINE TRACKER                                ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+// ─── Storyline Direction ───
+// Monthly storyline: confirmed by Daily breakout
+// Weekly storyline:  confirmed by 4H breakout
+// Daily storyline:   confirmed by 1H breakout
+
+var int monthly_story_dir = 0
+var int weekly_story_dir  = 0
+var int daily_story_dir   = 0
+
+// Monthly: D close breaks M SNR
+if not na(m_res_lvl) and d_close_htf > m_res_lvl and barstate.isconfirmed
+    monthly_story_dir := 1
+if not na(m_sup_lvl) and d_close_htf < m_sup_lvl and barstate.isconfirmed
+    monthly_story_dir := -1
+
+// Weekly: 4H close breaks W SNR
+if not na(w_res_lvl) and h4_close_htf > w_res_lvl and barstate.isconfirmed
+    weekly_story_dir := 1
+if not na(w_sup_lvl) and h4_close_htf < w_sup_lvl and barstate.isconfirmed
+    weekly_story_dir := -1
+
+// Daily: 1H close breaks D SNR
+if not na(d_res_lvl) and h1_close_htf > d_res_lvl and barstate.isconfirmed
+    daily_story_dir := 1
+if not na(d_sup_lvl) and h1_close_htf < d_sup_lvl and barstate.isconfirmed
+    daily_story_dir := -1
+
+// ─── Classic vs Advanced Mode ───
+// Count fresh levels in the current zone
+fresh_count = 0
+if levels.size() > 0
+    for i = 0 to levels.size() - 1
+        if levels.get(i).is_fresh
+            fresh_count += 1
+
+storyline_mode = fresh_count > 0 ? "Classic" : "Advanced"
+
+// ─── Three-Phase Tracker ───
+// Phase detection based on QM status and market structure
+var string current_phase   = "none"
+var int    phase_start_bar = 0
+
+// Determine the dominant storyline direction (majority of MTF alignment)
+dominant_dir = (monthly_story_dir + weekly_story_dir + daily_story_dir) > 0 ? 1 :
+               (monthly_story_dir + weekly_story_dir + daily_story_dir) < 0 ? -1 : 0
+
+// Start Phase: new QM detected + initial breakout
+if qm_patterns.size() > 0
+    _last_qm = qm_patterns.get(qm_patterns.size() - 1)
+    if _last_qm.active and bar_index - last_qm_bar < 30 and current_phase == "none"
+        current_phase   := "start"
+        phase_start_bar := bar_index
+
+// Middle Phase: continuation structure forming
+if current_phase == "start" and bar_index - phase_start_bar > 20
+    if swing_hi_vals.size() >= 2 and swing_lo_vals.size() >= 2
+        _last_sh = swing_hi_vals.get(swing_hi_vals.size() - 1)
+        _prev_sh = swing_hi_vals.get(swing_hi_vals.size() - 2)
+        _last_sl = swing_lo_vals.get(swing_lo_vals.size() - 1)
+        _prev_sl = swing_lo_vals.get(swing_lo_vals.size() - 2)
+        if dominant_dir == 1 and _last_sh > _prev_sh and _last_sl > _prev_sl
+            current_phase := "middle"
+        if dominant_dir == -1 and _last_sh < _prev_sh and _last_sl < _prev_sl
+            current_phase := "middle"
+
+// Ending Phase: price reaches major HTF level or trendline exhaustion
+if current_phase == "middle"
+    // Check proximity to Monthly/Weekly SNR
+    _near_m_res = not na(m_res_lvl) and math.abs(close - m_res_lvl) < atr_val * 3
+    _near_m_sup = not na(m_sup_lvl) and math.abs(close - m_sup_lvl) < atr_val * 3
+    _near_w_res = not na(w_res_lvl) and math.abs(close - w_res_lvl) < atr_val * 3
+    _near_w_sup = not na(w_sup_lvl) and math.abs(close - w_sup_lvl) < atr_val * 3
+    // Check trendline exhaustion
+    _tl_exhausted = false
+    if trendlines.size() > 0
+        for i = trendlines.size() - 1 to 0
+            if trendlines.get(i).touches >= i_tl_max - 1
+                _tl_exhausted := true
+                break
+    if _near_m_res or _near_m_sup or _near_w_res or _near_w_sup or _tl_exhausted
+        current_phase := "ending"
+
+// Reset phase if new QM forms
+if bar_index == last_qm_bar and current_phase != "start" and last_qm_bar > phase_start_bar
+    current_phase   := "start"
+    phase_start_bar := bar_index
+
+// ─── Phase Background Coloring ───
+phase_color = color.new(color.black, 100)  // transparent by default
+if i_show_phase
+    _alpha = i_phase_alpha
+    if current_phase == "start"
+        phase_color := dominant_dir >= 0 ? color.new(#00E676, _alpha) : color.new(#FF4444, _alpha)
+    else if current_phase == "middle"
+        phase_color := color.new(#2196F3, _alpha)
+    else if current_phase == "ending"
+        phase_color := color.new(#FFD740, _alpha)
+
+bgcolor(phase_color, title="Phase Background")
+
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║              MODULE 4: SETUP & ENTRY ENGINE                                 ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+// ─── Phase 1: QMS Setups (Start Phase) ───
+var line   setup_apex_ln  = na
+var line   setup_ls_ln    = na
+var line   setup_sbr_ln   = na
+var line   setup_ers_ln   = na
+var label  setup_apex_lbl = na
+var label  setup_ls_lbl   = na
+var label  setup_sbr_lbl  = na
+var label  setup_ers_lbl  = na
+
+// Active setup tracking
+var float active_apex  = na
+var float active_ls    = na
+var float active_sbr   = na
+var float active_ers   = na
+var string active_setup_dir = ""
+
+if i_show_setups and qm_patterns.size() > 0 and current_phase == "start"
+    _qm = qm_patterns.get(qm_patterns.size() - 1)
+    if _qm.active
+        active_apex := _qm.apex
+        active_ls   := _qm.ls_val
+        active_sbr  := _qm.sbr
+        active_ers  := _qm.ers_val
+        active_setup_dir := _qm.dir
+
+// ─── Refinement Algorithm ───
+// If the HTF Apex shows a long wick (>60% of candle range is wick),
+// scan 30M/15M intrabar data for the freshest unmitigated level within the wick
+var float refined_apex = na
+
+if i_refinement and not na(active_apex) and barstate.isconfirmed
+    // Check current candle's wick ratio at the apex level
+    _candle_range = f_range(0)
+    _body = f_body_size(0)
+    _wick_ratio = _candle_range > 0 ? 1.0 - (_body / _candle_range) : 0.0
+    
+    if _wick_ratio > 0.6 and chart_tf_sec > 15 * 60
+        // Scan 30M data for A/V shapes within the wick range (uses request.security data)
+        _best_level = na(refined_apex) ? active_apex : refined_apex
+        // Check 30M current + previous bar for A/V shape
+        if not na(m30_c) and not na(m30_c1)
+            // A-shape on 30M (for bearish QM refinement)
+            if active_setup_dir == "bear" and m30_c1 > m30_o1 and m30_c < m30_o
+                _ref_price = math.max(m30_c1, m30_o)
+                if _ref_price <= active_apex and _ref_price >= active_sbr
+                    _best_level := _ref_price
+            // V-shape on 30M (for bullish QM refinement)
+            if active_setup_dir == "bull" and m30_c1 < m30_o1 and m30_c > m30_o
+                _ref_price = math.min(m30_c1, m30_o)
+                if _ref_price >= active_apex and _ref_price <= active_sbr
+                    _best_level := _ref_price
+        // Also check 15M for finer refinement
+        if not na(m15_c) and not na(m15_c1)
+            if active_setup_dir == "bear" and m15_c1 > m15_o1 and m15_c < m15_o
+                _ref_price = math.max(m15_c1, m15_o)
+                if _ref_price <= active_apex and _ref_price >= active_sbr
+                    _best_level := _ref_price
+            if active_setup_dir == "bull" and m15_c1 < m15_o1 and m15_c > m15_o
+                _ref_price = math.min(m15_c1, m15_o)
+                if _ref_price >= active_apex and _ref_price <= active_sbr
+                    _best_level := _ref_price
+        if _best_level != active_apex
+            refined_apex := _best_level
+
+// ─── Phase 2 & 3: Continuation Setups ───
+var float cont_apex  = na
+var float cont_gap   = na
+var float cont_sbr   = na
+var bool  show_cont  = false
+
+if current_phase == "middle" or current_phase == "ending"
+    show_cont := true
+    // Continuation Apex: latest A/V shape in the continuation direction
+    if dominant_dir == 1 and is_v_shape
+        cont_apex := v_shape_price
+    if dominant_dir == -1 and is_a_shape
+        cont_apex := a_shape_price
+    // Continuation Gap: latest gap in continuation direction
+    if dominant_dir == 1 and bull_gap
+        cont_gap := (high[1] + low) / 2
+    if dominant_dir == -1 and bear_gap
+        cont_gap := (low[1] + high) / 2
+    // Continuation SBR/RBS: latest broken level
+    if levels.size() > 0
+        for i = levels.size() - 1 to 0
+            _lvl = levels.get(i)
+            if not _lvl.is_fresh and _lvl.touches > 0
+                cont_sbr := _lvl.price
+                break
+else
+    show_cont := false
+
+// Draw continuation labels (simplified)
+if show_cont and barstate.isconfirmed and barstate.islast
+    if not na(cont_apex)
+        label.new(bar_index + 5, cont_apex, "C.APEX",
+          color=color.new(#81C784, 60), textcolor=#81C784,
+          style=dominant_dir == 1 ? label.style_label_up : label.style_label_down, size=size.small)
+    if not na(cont_gap)
+        label.new(bar_index + 5, cont_gap, "C.GAP",
+          color=color.new(#FFD740, 60), textcolor=#FFD740,
+          style=label.style_label_center, size=size.small)
+
+// ─── Setup Alert System ───
+setup_alert_msg = ""
+if i_alert_setup and not na(active_apex) and barstate.isconfirmed
+    _use_apex = na(refined_apex) ? active_apex : refined_apex
+    _dist = math.abs(close - _use_apex)
+    if _dist < atr_val * 2
+        setup_alert_msg := "MSNR Setup: " + active_setup_dir + " QM | Apex: " + str.tostring(_use_apex, "#.####") +
+          " | Phase: " + current_phase
+
+if setup_alert_msg != ""
+    alert(setup_alert_msg, alert.freq_once_per_bar_close)
+
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║            MODULE 5: LTF CONFIRMATIONS & SNIPER SCORE                       ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+// ─── Entry Zone Proximity Check ───
+_entry_price = na(refined_apex) ? active_apex : refined_apex
+in_entry_zone = not na(_entry_price) and math.abs(close - _entry_price) < atr_val * 2.5
+
+// ─── LTF Trigger Variables ───
+var bool ltf_engulfing      = false
+var bool ltf_gap_break      = false
+var bool ltf_mini_qm        = false
+var bool ltf_ema_break      = false
+var float ltf_trigger_price = na
+
+// Reset triggers each bar
+ltf_engulfing  := false
+ltf_gap_break  := false
+ltf_mini_qm   := false
+ltf_ema_break  := false
+ltf_trigger_price := na
+
+if in_entry_zone and chart_tf_sec > 60
+    // ─── 1. Candle Rejection (Engulfing on LTF intrabar data) ───
+    if ltf_5m_valid and ltf_5m_c.size() > 1
+        for k = 1 to ltf_5m_c.size() - 1
+            _c = ltf_5m_c.get(k)
+            _o = ltf_5m_o.get(k)
+            _c_prev = ltf_5m_c.get(k - 1)
+            _o_prev = ltf_5m_o.get(k - 1)
+            _h = ltf_5m_h.get(k)
+            _l = ltf_5m_l.get(k)
+            _body = math.abs(_c - _o)
+            _range = _h - _l
+            _body_ratio = _range > 0 ? _body / _range : 0
+            // Bullish engulfing rejecting support
+            if active_setup_dir == "bull" and _c > _o and _c_prev < _o_prev and _body > math.abs(_c_prev - _o_prev) and _body_ratio > 0.6
+                ltf_engulfing := true
+                ltf_trigger_price := _c
+                break
+            // Bearish engulfing rejecting resistance
+            if active_setup_dir == "bear" and _c < _o and _c_prev > _o_prev and _body > math.abs(_c_prev - _o_prev) and _body_ratio > 0.6
+                ltf_engulfing := true
+                ltf_trigger_price := _c
+                break
+
+    // ─── 2. Breaking Gap on LTF ───
+    if ltf_5m_valid and ltf_5m_c.size() > 2
+        for k = 1 to ltf_5m_c.size() - 1
+            _h = ltf_5m_h.get(k)
+            _l = ltf_5m_l.get(k)
+            _h_prev = ltf_5m_h.get(k - 1)
+            _l_prev = ltf_5m_l.get(k - 1)
+            // Gap up then fill
+            if _l > _h_prev
+                // Check if next bar fills the gap
+                if k < ltf_5m_c.size() - 1
+                    _l_next = ltf_5m_l.get(k + 1)
+                    if _l_next <= _h_prev
+                        ltf_gap_break := true
+                        ltf_trigger_price := na(ltf_trigger_price) ? _h_prev : ltf_trigger_price
+                        break
+            // Gap down then fill
+            if _h < _l_prev
+                if k < ltf_5m_c.size() - 1
+                    _h_next = ltf_5m_h.get(k + 1)
+                    if _h_next >= _l_prev
+                        ltf_gap_break := true
+                        ltf_trigger_price := na(ltf_trigger_price) ? _l_prev : ltf_trigger_price
+                        break
+
+    // ─── 3. Mini QM on 1M/5M ───
+    // Simplified: look for 3-point reversal (H-L-HH or L-H-LL) in intrabar data
+    if ltf_1m_valid and ltf_1m_c.size() > 5
+        _max1 = -999999.0
+        _min1 = 999999.0
+        _max2 = -999999.0
+        _min2 = 999999.0
+        _half = math.floor(ltf_1m_c.size() / 2)
+        for k = 0 to _half - 1
+            _max1 := math.max(_max1, ltf_1m_h.get(k))
+            _min1 := math.min(_min1, ltf_1m_l.get(k))
+        for k = _half to ltf_1m_c.size() - 1
+            _max2 := math.max(_max2, ltf_1m_h.get(k))
+            _min2 := math.min(_min2, ltf_1m_l.get(k))
+        // Bullish mini QM: first half makes lower low, second half makes higher high
+        if active_setup_dir == "bull" and _min1 < _min2 and _max2 > _max1
+            ltf_mini_qm := true
+        // Bearish mini QM: first half makes higher high, second half makes lower low
+        if active_setup_dir == "bear" and _max1 > _max2 and _min2 < _min1
+            ltf_mini_qm := true
+
+    // ─── 4. 5M EMA Break ───
+    if not na(m5_cl) and not na(m5_ema_val) and not na(m5_op)
+        _m5_body = math.abs(m5_cl - m5_op)
+        _m5_range = m5_hi - m5_lo
+        _m5_body_ratio = _m5_range > 0 ? _m5_body / _m5_range : 0
+        // Bullish: engulfing close above EMA
+        if active_setup_dir == "bull" and m5_cl > m5_op and m5_cl > m5_ema_val and m5_op < m5_ema_val and _m5_body_ratio > 0.5
+            ltf_ema_break := true
+        // Bearish: engulfing close below EMA
+        if active_setup_dir == "bear" and m5_cl < m5_op and m5_cl < m5_ema_val and m5_op > m5_ema_val and _m5_body_ratio > 0.5
+            ltf_ema_break := true
+
+// ─── Sniper Score Calculator ("Proximity is Power") ───
+sniper_score = 0
+if in_entry_zone and not na(_entry_price)
+    _atr = atr_val
+    if _atr > 0
+        // Score each trigger based on proximity
+        if ltf_engulfing
+            _dist = not na(ltf_trigger_price) ? math.abs(ltf_trigger_price - _entry_price) : _atr
+            _prox = 1.0 - (_dist / (_atr * 3))
+            sniper_score += _prox > 0.8 ? 3 : _prox > 0.5 ? 2 : _prox > 0.2 ? 1 : 0
+        if ltf_gap_break
+            sniper_score += 2
+        if ltf_mini_qm
+            sniper_score += 2
+        if ltf_ema_break
+            sniper_score += 3
+        // Cluster bonus: 3+ triggers found
+        _trigger_count = (ltf_engulfing ? 1 : 0) + (ltf_gap_break ? 1 : 0) + (ltf_mini_qm ? 1 : 0) + (ltf_ema_break ? 1 : 0)
+        if _trigger_count >= 3
+            sniper_score += 2
+
+// ─── Sniper Score Display ───
+var label sniper_lbl = na
+
+if i_show_sniper and in_entry_zone and sniper_score > 0 and barstate.islast
+    _score_col = sniper_score >= 8 ? #00E676 : sniper_score >= 5 ? #FFD740 : #FF4444
+    _score_text = "🎯 Sniper: " + str.tostring(sniper_score) + "/10"
+    if active_setup_dir == "bull"
+        _score_text += " | BUY ZONE"
+    else if active_setup_dir == "bear"
+        _score_text += " | SELL ZONE"
+    // Trigger breakdown
+    _triggers = ""
+    if ltf_engulfing
+        _triggers += " ✓Engulf"
+    if ltf_gap_break
+        _triggers += " ✓Gap"
+    if ltf_mini_qm
+        _triggers += " ✓MiniQM"
+    if ltf_ema_break
+        _triggers += " ✓EMA"
+    _score_text += "\n" + _triggers
+    if not na(sniper_lbl)
+        label.delete(sniper_lbl)
+    sniper_lbl := label.new(bar_index + 3, close, _score_text, color=color.new(_score_col, 30), textcolor=color.white, style=label.style_label_left, size=size.normal)
+
+// Sniper alert
+if sniper_score >= i_min_score and barstate.isconfirmed and in_entry_zone
+    _alert_msg = "🎯 MSNR Sniper Score: " + str.tostring(sniper_score) + "/10 | " + active_setup_dir + " setup at " + str.tostring(_entry_price, "#.####")
+    alert(_alert_msg, alert.freq_once_per_bar_close)
+
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║                        STORYLINE DASHBOARD                                  ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+if i_show_dash
+    _pos = switch i_dash_pos
+        "Top Right"    => position.top_right
+        "Top Left"     => position.top_left
+        "Bottom Right"  => position.bottom_right
+        "Bottom Left"   => position.bottom_left
+        => position.top_right
+
+    var table dash = table.new(_pos, 3, 9,
+      bgcolor=#1A1A2E, frame_color=#2A2A4E, frame_width=2, border_color=#2A2A4E, border_width=1)
+
+    if barstate.islast
+        // Header
+        table.cell(dash, 0, 0, "MSNR ULTIMATE", text_color=#E0E0E0, text_size=size.small, text_halign=text.align_center)
+        table.merge_cells(dash, 0, 0, 2, 0)
+
+        // Storyline Headers
+        table.cell(dash, 0, 1, "Timeframe", text_color=#888888, text_size=size.tiny, text_halign=text.align_left)
+        table.cell(dash, 1, 1, "Story", text_color=#888888, text_size=size.tiny, text_halign=text.align_center)
+        table.cell(dash, 2, 1, "Level", text_color=#888888, text_size=size.tiny, text_halign=text.align_right)
+
+        // Monthly
+        _m_arrow = monthly_story_dir > 0 ? "▲ Bull" : monthly_story_dir < 0 ? "▼ Bear" : "— Neutral"
+        _m_col = monthly_story_dir > 0 ? #00E676 : monthly_story_dir < 0 ? #FF4444 : #888888
+        table.cell(dash, 0, 2, "Monthly", text_color=#B0B0B0, text_size=size.tiny, text_halign=text.align_left)
+        table.cell(dash, 1, 2, _m_arrow, text_color=_m_col, text_size=size.tiny, text_halign=text.align_center)
+        _m_lvl = monthly_story_dir > 0 ? str.tostring(m_res_lvl, "#.##") : monthly_story_dir < 0 ? str.tostring(m_sup_lvl, "#.##") : "—"
+        table.cell(dash, 2, 2, _m_lvl, text_color=_m_col, text_size=size.tiny, text_halign=text.align_right)
+
+        // Weekly
+        _w_arrow = weekly_story_dir > 0 ? "▲ Bull" : weekly_story_dir < 0 ? "▼ Bear" : "— Neutral"
+        _w_col = weekly_story_dir > 0 ? #00E676 : weekly_story_dir < 0 ? #FF4444 : #888888
+        table.cell(dash, 0, 3, "Weekly", text_color=#B0B0B0, text_size=size.tiny, text_halign=text.align_left)
+        table.cell(dash, 1, 3, _w_arrow, text_color=_w_col, text_size=size.tiny, text_halign=text.align_center)
+        _w_lvl = weekly_story_dir > 0 ? str.tostring(w_res_lvl, "#.##") : weekly_story_dir < 0 ? str.tostring(w_sup_lvl, "#.##") : "—"
+        table.cell(dash, 2, 3, _w_lvl, text_color=_w_col, text_size=size.tiny, text_halign=text.align_right)
+
+        // Daily
+        _d_arrow = daily_story_dir > 0 ? "▲ Bull" : daily_story_dir < 0 ? "▼ Bear" : "— Neutral"
+        _d_col = daily_story_dir > 0 ? #00E676 : daily_story_dir < 0 ? #FF4444 : #888888
+        table.cell(dash, 0, 4, "Daily", text_color=#B0B0B0, text_size=size.tiny, text_halign=text.align_left)
+        table.cell(dash, 1, 4, _d_arrow, text_color=_d_col, text_size=size.tiny, text_halign=text.align_center)
+        _d_lvl = daily_story_dir > 0 ? str.tostring(d_res_lvl, "#.##") : daily_story_dir < 0 ? str.tostring(d_sup_lvl, "#.##") : "—"
+        table.cell(dash, 2, 4, _d_lvl, text_color=_d_col, text_size=size.tiny, text_halign=text.align_right)
+
+        // Separator
+        table.cell(dash, 0, 5, "", text_size=size.tiny)
+        table.merge_cells(dash, 0, 5, 2, 5)
+
+        // Phase
+        _phase_txt = current_phase == "start" ? "🟢 START" : current_phase == "middle" ? "🔵 MIDDLE" : current_phase == "ending" ? "🟡 ENDING" : "⚫ NONE"
+        _phase_col = current_phase == "start" ? #00E676 : current_phase == "middle" ? #2196F3 : current_phase == "ending" ? #FFD740 : #888888
+        table.cell(dash, 0, 6, "Phase", text_color=#888888, text_size=size.tiny, text_halign=text.align_left)
+        table.cell(dash, 1, 6, _phase_txt, text_color=_phase_col, text_size=size.tiny, text_halign=text.align_center)
+        table.merge_cells(dash, 1, 6, 2, 6)
+
+        // Mode
+        _mode_txt = storyline_mode == "Classic" ? "📊 Classic" : "🎯 Advanced"
+        _mode_col = storyline_mode == "Classic" ? #42A5F5 : #FF9800
+        table.cell(dash, 0, 7, "Mode", text_color=#888888, text_size=size.tiny, text_halign=text.align_left)
+        table.cell(dash, 1, 7, _mode_txt, text_color=_mode_col, text_size=size.tiny, text_halign=text.align_center)
+        table.merge_cells(dash, 1, 7, 2, 7)
+
+        // Active QM count
+        _active_qm = 0
+        if qm_patterns.size() > 0
+            for i = 0 to qm_patterns.size() - 1
+                if qm_patterns.get(i).active
+                    _active_qm += 1
+        table.cell(dash, 0, 8, "Active QM", text_color=#888888, text_size=size.tiny, text_halign=text.align_left)
+        table.cell(dash, 1, 8, str.tostring(_active_qm), text_color=#E040FB, text_size=size.tiny, text_halign=text.align_center)
+        _score_display = in_entry_zone and sniper_score > 0 ? "🎯" + str.tostring(sniper_score) : "—"
+        _sc_col = sniper_score >= 8 ? #00E676 : sniper_score >= 5 ? #FFD740 : sniper_score > 0 ? #FF4444 : #888888
+        table.cell(dash, 2, 8, _score_display, text_color=_sc_col, text_size=size.tiny, text_halign=text.align_right)
+
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║                              PLOTS                                          ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+// Plot HTF storyline levels as reference lines (subtle)
+plot(m_res_lvl, "Monthly Resistance", color=color.new(#FF4444, 70), linewidth=1, style=plot.style_stepline_diamond)
+plot(m_sup_lvl, "Monthly Support",    color=color.new(#00E676, 70), linewidth=1, style=plot.style_stepline_diamond)
+plot(w_res_lvl, "Weekly Resistance",  color=color.new(#FF8888, 80), linewidth=1, style=plot.style_stepline)
+plot(w_sup_lvl, "Weekly Support",     color=color.new(#66FFA6, 80), linewidth=1, style=plot.style_stepline)
+plot(d_res_lvl, "Daily Resistance",   color=color.new(#FFAAAA, 85), linewidth=1, style=plot.style_stepline)
+plot(d_sup_lvl, "Daily Support",      color=color.new(#88FFB8, 85), linewidth=1, style=plot.style_stepline)
+
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║                           END OF SCRIPT                                     ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
