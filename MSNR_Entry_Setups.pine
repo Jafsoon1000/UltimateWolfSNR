@@ -65,19 +65,22 @@ f_htf_data() =>
 // ║                 MTF STRICT ALIGNMENT ENGINE                                  ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 
-f_aligns(float val1, float val2) =>
-    _tol = ta.atr(14) * 0.5
+f_aligns(float val1, float val2, float atr_tol) =>
+    _tol = atr_tol * 0.5
+    not na(val1) and not na(val2) and math.abs(val1 - val2) < _tol
+
+atr_val = ta.atr(14)
     not na(val1) and not na(val2) and math.abs(val1 - val2) < _tol
 
 // --- 4H GAP ALIGNMENT ---
 // 4H Gap MUST align with 1H Gap + 1H Classic (A/V) + 30m Classic
-bool h4_bull_gap_aligned = f_aligns(h4_bg, h1_bg) and f_aligns(h4_bg, h1_v) and f_aligns(h4_bg, m30_v)
-bool h4_bear_gap_aligned = f_aligns(h4_brg, h1_brg) and f_aligns(h4_brg, h1_a) and f_aligns(h4_brg, m30_a)
+bool h4_bull_gap_aligned = f_aligns(h4_bg, h1_bg, atr_val) and f_aligns(h4_bg, h1_v, atr_val) and f_aligns(h4_bg, m30_v, atr_val)
+bool h4_bear_gap_aligned = f_aligns(h4_brg, h1_brg, atr_val) and f_aligns(h4_brg, h1_a, atr_val) and f_aligns(h4_brg, m30_a, atr_val)
 
 // --- 1H GAP ALIGNMENT ---
 // 1H Gap MUST align with 30m Classic + 15m Classic
-bool h1_bull_gap_aligned = f_aligns(h1_bg, m30_v) and f_aligns(h1_bg, m15_v)
-bool h1_bear_gap_aligned = f_aligns(h1_brg, m30_a) and f_aligns(h1_brg, m15_a)
+bool h1_bull_gap_aligned = f_aligns(h1_bg, m30_v, atr_val) and f_aligns(h1_bg, m15_v, atr_val)
+bool h1_bear_gap_aligned = f_aligns(h1_brg, m30_a, atr_val) and f_aligns(h1_brg, m15_a, atr_val)
 
 // Visualizing Alignments
 if h4_bull_gap_aligned and i_show_4h_align and barstate.isconfirmed
@@ -163,8 +166,7 @@ if not na(h1_a) and h1_a != h1_a[1]
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 
 ema_val = ta.ema(close, i_ema_len)
-if i_show_ltf_ema
-    plot(ema_val, color=color.purple, title="Execution EMA")
+plot(i_show_ltf_ema ? ema_val : na, color=color.purple, title="Execution EMA")
 
 // Trigger 1: 5Min EMA Break 
 bull_ema_break = close[1] < ema_val[1] and close > ema_val and f_is_bullish(0)
@@ -177,7 +179,7 @@ bear_engulfing = f_is_bearish(0) and f_is_bullish(1) and close < open[1] and mat
 // Evaluate Triggers against Active Setups
 // Bullish Setup Execution (Retesting RBS)
 if is_valid_bull_qm and not na(active_bull_rbs)
-    _tol = ta.atr(14)
+    _tol = atr_val
     if low <= active_bull_rbs + _tol and low >= active_bull_rbs - _tol
         if bull_ema_break
             label.new(bar_index, low, "🚀 EXECUTE (RBS)\nEMA Break", style=label.style_label_up, color=#00E676, textcolor=color.black)
@@ -185,9 +187,9 @@ if is_valid_bull_qm and not na(active_bull_rbs)
             is_valid_bull_qm := false // Consume setup
 
 // Fallback to LS
-if is_valid_bull_qm and not na(active_bull_ls) and close < active_bull_rbs - ta.atr(14)
+if is_valid_bull_qm and not na(active_bull_ls) and close < active_bull_rbs - atr_val
     // RBS Failed, looking at LS
-    _tol = ta.atr(14)
+    _tol = atr_val
     if low <= active_bull_ls + _tol and low >= active_bull_ls - _tol
         if bull_engulfing
             label.new(bar_index, low, "🚀 EXECUTE (LS)\nEngulfing", style=label.style_label_up, color=#00E676, textcolor=color.black)
@@ -196,7 +198,7 @@ if is_valid_bull_qm and not na(active_bull_ls) and close < active_bull_rbs - ta.
 
 // Bearish Setup Execution (Retesting SBR)
 if is_valid_bear_qm and not na(active_bear_sbr)
-    _tol = ta.atr(14)
+    _tol = atr_val
     if high >= active_bear_sbr - _tol and high <= active_bear_sbr + _tol
         if bear_ema_break
             label.new(bar_index, high, "🔻 EXECUTE (SBR)\nEMA Break", style=label.style_label_down, color=#FF4444, textcolor=color.white)
@@ -204,8 +206,8 @@ if is_valid_bear_qm and not na(active_bear_sbr)
             is_valid_bear_qm := false // Consume setup
 
 // Fallback to LS
-if is_valid_bear_qm and not na(active_bear_ls) and close > active_bear_sbr + ta.atr(14)
-    _tol = ta.atr(14)
+if is_valid_bear_qm and not na(active_bear_ls) and close > active_bear_sbr + atr_val
+    _tol = atr_val
     if high >= active_bear_ls - _tol and high <= active_bear_ls + _tol
         if bear_engulfing
             label.new(bar_index, high, "🔻 EXECUTE (LS)\nEngulfing", style=label.style_label_down, color=#FF4444, textcolor=color.white)
@@ -217,8 +219,8 @@ if is_valid_bear_qm and not na(active_bear_ls) and close > active_bear_sbr + ta.
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 
 // Mini Storyline SNR (30m / 15m) Continuation
-if not na(m30_v) and f_aligns(m30_v, m15_v) and bull_ema_break
+if not na(m30_v) and f_aligns(m30_v, m15_v, atr_val) and bull_ema_break
     label.new(bar_index, low, "🟢 C.SNR (30m)", style=label.style_label_up, color=color.new(#00bcd4, 50))
     
-if not na(m30_a) and f_aligns(m30_a, m15_a) and bear_ema_break
+if not na(m30_a) and f_aligns(m30_a, m15_a, atr_val) and bear_ema_break
     label.new(bar_index, high, "🔴 C.SNR (30m)", style=label.style_label_down, color=color.new(#ff5722, 50))
