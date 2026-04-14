@@ -70,8 +70,6 @@ f_aligns(float val1, float val2, float atr_tol) =>
     not na(val1) and not na(val2) and math.abs(val1 - val2) < _tol
 
 atr_val = ta.atr(14)
-    not na(val1) and not na(val2) and math.abs(val1 - val2) < _tol
-
 // --- 4H GAP ALIGNMENT ---
 // 4H Gap MUST align with 1H Gap + 1H Classic (A/V) + 30m Classic
 bool h4_bull_gap_aligned = f_aligns(h4_bg, h1_bg, atr_val) and f_aligns(h4_bg, h1_v, atr_val) and f_aligns(h4_bg, m30_v, atr_val)
