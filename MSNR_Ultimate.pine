@@ -72,7 +72,7 @@ type Storyline
     int    origin_bar  = 0      // Bar where storyline started
     float  destination = na     // Next fresh level target
     string phase       = ""     // "start", "middle", "ending"
-    bool   active      = true
+    bool   active      = false
     line   origin_ln   = na     // Horizontal line at origin
     line   dest_ln     = na     // Horizontal ray at destination
     line   path_ln     = na     // Diagonal path: origin → current
@@ -207,9 +207,9 @@ var levels = array.new<Level>()
 
 // ─── Per-TF Storyline Tracking ───
 // Active storylines (one per TF max)
-var Storyline story_m = na
-var Storyline story_w = na
-var Storyline story_d = na
+var Storyline story_m = Storyline.new()
+var Storyline story_w = Storyline.new()
+var Storyline story_d = Storyline.new()
 
 // HTF Touch/Rejection state (3-event detection)
 var bool  m_touched = false
@@ -357,198 +357,6 @@ while levels.size() > i_max_levels
     if not na(old.bx)
         box.delete(old.bx)
 
-// ─── MSNR Storyline Detector ───
-// 3-Event Detection: Touch → Rejection → QM Breakout
-// Each HTF storyline (M/W/D) runs independently and can coexist
-
-// Helper: cleanup old storyline drawings
-f_cleanup_story(s) =>
-    if not na(s)
-        if not na(s.origin_ln)
-            line.delete(s.origin_ln)
-        if not na(s.dest_ln)
-            line.delete(s.dest_ln)
-        if not na(s.path_ln)
-            line.delete(s.path_ln)
-        if not na(s.origin_lbl)
-            label.delete(s.origin_lbl)
-        if not na(s.dest_lbl)
-            label.delete(s.dest_lbl)
-        if not na(s.phase_lbl)
-            label.delete(s.phase_lbl)
-
-// Helper: create a new storyline with visuals
-f_create_story(_tf, _dir, _origin, _origin_bar, _dest, _bull_col, _bear_col) =>
-    s = Storyline.new()
-    s.tf          := _tf
-    s.direction   := _dir
-    s.origin      := _origin
-    s.origin_bar  := _origin_bar
-    s.destination := _dest
-    s.phase       := "start"
-    s.active      := true
-    _col = _dir > 0 ? _bull_col : _bear_col
-    _dir_txt = _dir > 0 ? "▲" : "▼"
-    s.origin_ln  := line.new(_origin_bar, _origin, bar_index + 30, _origin, color=_col, style=line.style_dashed, width=1)
-    s.origin_lbl := label.new(_origin_bar, _origin, _tf + _dir_txt + " STORY START", color=color.new(_col, 30), textcolor=color.white, style=_dir > 0 ? label.style_label_up : label.style_label_down, size=size.small)
-    if not na(_dest)
-        s.dest_ln  := line.new(_origin_bar, _dest, bar_index + 30, _dest, color=color.new(_col, 50), style=line.style_dotted, width=1)
-        s.dest_lbl := label.new(bar_index + 5, _dest, "→ " + _tf + " Target: " + str.tostring(_dest, "#.####"), color=color.new(_col, 40), textcolor=_col, style=_dir > 0 ? label.style_label_down : label.style_label_up, size=size.tiny)
-    s.path_ln := line.new(_origin_bar, _origin, bar_index, close, color=_col, width=i_zz_width, style=line.style_solid)
-    s
-
-// ─── Event 1: Touch Detection (runs every bar) ───
-_touch_tol = atr_val * 1.5
-if barstate.isconfirmed
-    // Monthly touch
-    if not m_touched
-        if not na(m_res_lvl) and high >= m_res_lvl - _touch_tol and high <= m_res_lvl + _touch_tol
-            m_touched := true
-            m_touch_price := m_res_lvl
-            m_touch_bar := bar_index
-            m_touch_dir := -1   // touched resistance → potential bearish reversal
-        if not na(m_sup_lvl) and low <= m_sup_lvl + _touch_tol and low >= m_sup_lvl - _touch_tol
-            m_touched := true
-            m_touch_price := m_sup_lvl
-            m_touch_bar := bar_index
-            m_touch_dir := 1    // touched support → potential bullish reversal
-    // Weekly touch
-    if not w_touched
-        if not na(w_res_lvl) and high >= w_res_lvl - _touch_tol and high <= w_res_lvl + _touch_tol
-            w_touched := true
-            w_touch_price := w_res_lvl
-            w_touch_bar := bar_index
-            w_touch_dir := -1
-        if not na(w_sup_lvl) and low <= w_sup_lvl + _touch_tol and low >= w_sup_lvl - _touch_tol
-            w_touched := true
-            w_touch_price := w_sup_lvl
-            w_touch_bar := bar_index
-            w_touch_dir := 1
-    // Daily touch
-    if not d_touched
-        if not na(d_res_lvl) and high >= d_res_lvl - _touch_tol and high <= d_res_lvl + _touch_tol
-            d_touched := true
-            d_touch_price := d_res_lvl
-            d_touch_bar := bar_index
-            d_touch_dir := -1
-        if not na(d_sup_lvl) and low <= d_sup_lvl + _touch_tol and low >= d_sup_lvl - _touch_tol
-            d_touched := true
-            d_touch_price := d_sup_lvl
-            d_touch_bar := bar_index
-            d_touch_dir := 1
-
-// ─── Event 2: Rejection Detection ───
-if barstate.isconfirmed
-    if m_touched and not m_rejected and not na(m_touch_price)
-        if f_wick_touches(m_touch_price, 0)
-            m_rejected := true
-    if w_touched and not w_rejected and not na(w_touch_price)
-        if f_wick_touches(w_touch_price, 0)
-            w_rejected := true
-    if d_touched and not d_rejected and not na(d_touch_price)
-        if f_wick_touches(d_touch_price, 0)
-            d_rejected := true
-
-// ─── Event 3: QM Breakout Confirmation ───
-// Check if a QM pattern + BOS confirms the storyline
-_has_qm_bos = qm_patterns.size() > 0 and bar_index == last_qm_bar
-
-// Monthly storyline: confirmed by Daily breakout (approximate via d_close_htf beyond M level)
-if m_touched and m_rejected and barstate.isconfirmed
-    _m_confirmed = false
-    _m_dir = m_touch_dir
-    // Daily close breaking Monthly structure + active QM
-    if _m_dir == 1 and not na(d_close_htf) and not na(m_touch_price) and d_close_htf > m_touch_price and _has_qm_bos
-        _m_confirmed := true
-    if _m_dir == -1 and not na(d_close_htf) and not na(m_touch_price) and d_close_htf < m_touch_price and _has_qm_bos
-        _m_confirmed := true
-    if _m_confirmed
-        // Find destination: next fresh Monthly level in direction
-        _m_dest = _m_dir == 1 ? m_res_lvl : m_sup_lvl
-        f_cleanup_story(story_m)
-        story_m := f_create_story("M", _m_dir, m_touch_price, m_touch_bar, _m_dest, #00E676, #FF4444)
-        monthly_story_dir := _m_dir
-        m_touched := false
-        m_rejected := false
-
-// Weekly storyline: confirmed by 4H breakout
-if w_touched and w_rejected and barstate.isconfirmed
-    _w_confirmed = false
-    _w_dir = w_touch_dir
-    if _w_dir == 1 and not na(h4_close_htf) and not na(w_touch_price) and h4_close_htf > w_touch_price and _has_qm_bos
-        _w_confirmed := true
-    if _w_dir == -1 and not na(h4_close_htf) and not na(w_touch_price) and h4_close_htf < w_touch_price and _has_qm_bos
-        _w_confirmed := true
-    if _w_confirmed
-        _w_dest = _w_dir == 1 ? w_res_lvl : w_sup_lvl
-        f_cleanup_story(story_w)
-        story_w := f_create_story("W", _w_dir, w_touch_price, w_touch_bar, _w_dest, #42A5F5, #FF9800)
-        weekly_story_dir := _w_dir
-        w_touched := false
-        w_rejected := false
-
-// Daily storyline: confirmed by 1H breakout
-if d_touched and d_rejected and barstate.isconfirmed
-    _d_confirmed = false
-    _d_dir = d_touch_dir
-    if _d_dir == 1 and not na(h1_close_htf) and not na(d_touch_price) and h1_close_htf > d_touch_price and _has_qm_bos
-        _d_confirmed := true
-    if _d_dir == -1 and not na(h1_close_htf) and not na(d_touch_price) and h1_close_htf < d_touch_price and _has_qm_bos
-        _d_confirmed := true
-    if _d_confirmed
-        _d_dest = _d_dir == 1 ? d_res_lvl : d_sup_lvl
-        f_cleanup_story(story_d)
-        story_d := f_create_story("D", _d_dir, d_touch_price, d_touch_bar, _d_dest, #E040FB, #FFD740)
-        daily_story_dir := _d_dir
-        d_touched := false
-        d_rejected := false
-
-// Expire pending touches after 50 bars without rejection
-if m_touched and bar_index - m_touch_bar > 50
-    m_touched := false
-    m_rejected := false
-if w_touched and bar_index - w_touch_bar > 50
-    w_touched := false
-    w_rejected := false
-if d_touched and bar_index - d_touch_bar > 50
-    d_touched := false
-    d_rejected := false
-
-// ─── Update Active Storyline Visuals ───
-// Extend path lines and check phase transitions
-if not na(story_m) and story_m.active
-    line.set_xy2(story_m.path_ln, bar_index, close)
-    if not na(story_m.origin_ln)
-        line.set_x2(story_m.origin_ln, bar_index + 20)
-    if not na(story_m.dest_ln)
-        line.set_x2(story_m.dest_ln, bar_index + 20)
-    if not na(story_m.dest_lbl)
-        label.set_x(story_m.dest_lbl, bar_index + 5)
-    // Phase: ending when near destination
-    if not na(story_m.destination) and math.abs(close - story_m.destination) < atr_val * 3
-        story_m.phase := "ending"
-
-if not na(story_w) and story_w.active
-    line.set_xy2(story_w.path_ln, bar_index, close)
-    if not na(story_w.origin_ln)
-        line.set_x2(story_w.origin_ln, bar_index + 20)
-    if not na(story_w.dest_ln)
-        line.set_x2(story_w.dest_ln, bar_index + 20)
-    if not na(story_w.dest_lbl)
-        label.set_x(story_w.dest_lbl, bar_index + 5)
-    if not na(story_w.destination) and math.abs(close - story_w.destination) < atr_val * 3
-        story_w.phase := "ending"
-
-if not na(story_d) and story_d.active
-    line.set_xy2(story_d.path_ln, bar_index, close)
-    if not na(story_d.origin_ln)
-        line.set_x2(story_d.origin_ln, bar_index + 20)
-    if not na(story_d.dest_ln)
-        line.set_x2(story_d.dest_ln, bar_index + 20)
-    if not na(story_d.dest_lbl)
-        label.set_x(story_d.dest_lbl, bar_index + 5)
-    if not na(story_d.destination) and math.abs(close - story_d.destination) < atr_val * 3
-        story_d.phase := "ending"
 
 
 // ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -838,7 +646,189 @@ if qm_patterns.size() > 0
                 _qm.active := false
 
 // ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║            MSNR STORYLINE DETECTOR                                          ║
+// ║    3-Event Detection: Touch → Rejection → QM Breakout                      ║
+// ║    Each HTF storyline (M/W/D) runs independently and can coexist           ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+
+// Helper: cleanup old storyline drawings
+f_cleanup_story(s) =>
+    if s.active
+        if not na(s.origin_ln)
+            line.delete(s.origin_ln)
+        if not na(s.dest_ln)
+            line.delete(s.dest_ln)
+        if not na(s.path_ln)
+            line.delete(s.path_ln)
+        if not na(s.origin_lbl)
+            label.delete(s.origin_lbl)
+        if not na(s.dest_lbl)
+            label.delete(s.dest_lbl)
+        if not na(s.phase_lbl)
+            label.delete(s.phase_lbl)
+
+// Helper: create a new storyline with visuals
+f_create_story(_tf, _dir, _origin, _origin_bar, _dest, _bull_col, _bear_col) =>
+    s = Storyline.new()
+    s.tf          := _tf
+    s.direction   := _dir
+    s.origin      := _origin
+    s.origin_bar  := _origin_bar
+    s.destination := _dest
+    s.phase       := "start"
+    s.active      := true
+    _col = _dir > 0 ? _bull_col : _bear_col
+    _dir_txt = _dir > 0 ? "▲" : "▼"
+    s.origin_ln  := line.new(_origin_bar, _origin, bar_index + 30, _origin, color=_col, style=line.style_dashed, width=1)
+    s.origin_lbl := label.new(_origin_bar, _origin, _tf + _dir_txt + " STORY START", color=color.new(_col, 30), textcolor=color.white, style=_dir > 0 ? label.style_label_up : label.style_label_down, size=size.small)
+    if not na(_dest)
+        s.dest_ln  := line.new(_origin_bar, _dest, bar_index + 30, _dest, color=color.new(_col, 50), style=line.style_dotted, width=1)
+        s.dest_lbl := label.new(bar_index + 5, _dest, "→ " + _tf + " Target: " + str.tostring(_dest, "#.####"), color=color.new(_col, 40), textcolor=_col, style=_dir > 0 ? label.style_label_down : label.style_label_up, size=size.tiny)
+    s.path_ln := line.new(_origin_bar, _origin, bar_index, close, color=_col, width=i_zz_width, style=line.style_solid)
+    s
+
+// ─── Event 1: Touch Detection ───
+_touch_tol = atr_val * 1.5
+if barstate.isconfirmed
+    if not m_touched
+        if not na(m_res_lvl) and high >= m_res_lvl - _touch_tol and high <= m_res_lvl + _touch_tol
+            m_touched := true
+            m_touch_price := m_res_lvl
+            m_touch_bar := bar_index
+            m_touch_dir := -1
+        if not na(m_sup_lvl) and low <= m_sup_lvl + _touch_tol and low >= m_sup_lvl - _touch_tol
+            m_touched := true
+            m_touch_price := m_sup_lvl
+            m_touch_bar := bar_index
+            m_touch_dir := 1
+    if not w_touched
+        if not na(w_res_lvl) and high >= w_res_lvl - _touch_tol and high <= w_res_lvl + _touch_tol
+            w_touched := true
+            w_touch_price := w_res_lvl
+            w_touch_bar := bar_index
+            w_touch_dir := -1
+        if not na(w_sup_lvl) and low <= w_sup_lvl + _touch_tol and low >= w_sup_lvl - _touch_tol
+            w_touched := true
+            w_touch_price := w_sup_lvl
+            w_touch_bar := bar_index
+            w_touch_dir := 1
+    if not d_touched
+        if not na(d_res_lvl) and high >= d_res_lvl - _touch_tol and high <= d_res_lvl + _touch_tol
+            d_touched := true
+            d_touch_price := d_res_lvl
+            d_touch_bar := bar_index
+            d_touch_dir := -1
+        if not na(d_sup_lvl) and low <= d_sup_lvl + _touch_tol and low >= d_sup_lvl - _touch_tol
+            d_touched := true
+            d_touch_price := d_sup_lvl
+            d_touch_bar := bar_index
+            d_touch_dir := 1
+
+// ─── Event 2: Rejection Detection ───
+if barstate.isconfirmed
+    if m_touched and not m_rejected and not na(m_touch_price)
+        if f_wick_touches(m_touch_price, 0)
+            m_rejected := true
+    if w_touched and not w_rejected and not na(w_touch_price)
+        if f_wick_touches(w_touch_price, 0)
+            w_rejected := true
+    if d_touched and not d_rejected and not na(d_touch_price)
+        if f_wick_touches(d_touch_price, 0)
+            d_rejected := true
+
+// ─── Event 3: QM Breakout Confirmation ───
+_has_qm_bos = qm_patterns.size() > 0 and bar_index == last_qm_bar
+
+if m_touched and m_rejected and barstate.isconfirmed
+    _m_confirmed = false
+    _m_dir = m_touch_dir
+    if _m_dir == 1 and not na(d_close_htf) and not na(m_touch_price) and d_close_htf > m_touch_price and _has_qm_bos
+        _m_confirmed := true
+    if _m_dir == -1 and not na(d_close_htf) and not na(m_touch_price) and d_close_htf < m_touch_price and _has_qm_bos
+        _m_confirmed := true
+    if _m_confirmed
+        _m_dest = _m_dir == 1 ? m_res_lvl : m_sup_lvl
+        f_cleanup_story(story_m)
+        story_m := f_create_story("M", _m_dir, m_touch_price, m_touch_bar, _m_dest, #00E676, #FF4444)
+        m_touched := false
+        m_rejected := false
+
+if w_touched and w_rejected and barstate.isconfirmed
+    _w_confirmed = false
+    _w_dir = w_touch_dir
+    if _w_dir == 1 and not na(h4_close_htf) and not na(w_touch_price) and h4_close_htf > w_touch_price and _has_qm_bos
+        _w_confirmed := true
+    if _w_dir == -1 and not na(h4_close_htf) and not na(w_touch_price) and h4_close_htf < w_touch_price and _has_qm_bos
+        _w_confirmed := true
+    if _w_confirmed
+        _w_dest = _w_dir == 1 ? w_res_lvl : w_sup_lvl
+        f_cleanup_story(story_w)
+        story_w := f_create_story("W", _w_dir, w_touch_price, w_touch_bar, _w_dest, #42A5F5, #FF9800)
+        w_touched := false
+        w_rejected := false
+
+if d_touched and d_rejected and barstate.isconfirmed
+    _d_confirmed = false
+    _d_dir = d_touch_dir
+    if _d_dir == 1 and not na(h1_close_htf) and not na(d_touch_price) and h1_close_htf > d_touch_price and _has_qm_bos
+        _d_confirmed := true
+    if _d_dir == -1 and not na(h1_close_htf) and not na(d_touch_price) and h1_close_htf < d_touch_price and _has_qm_bos
+        _d_confirmed := true
+    if _d_confirmed
+        _d_dest = _d_dir == 1 ? d_res_lvl : d_sup_lvl
+        f_cleanup_story(story_d)
+        story_d := f_create_story("D", _d_dir, d_touch_price, d_touch_bar, _d_dest, #E040FB, #FFD740)
+        d_touched := false
+        d_rejected := false
+
+// Expire pending touches after 50 bars
+if m_touched and bar_index - m_touch_bar > 50
+    m_touched := false
+    m_rejected := false
+if w_touched and bar_index - w_touch_bar > 50
+    w_touched := false
+    w_rejected := false
+if d_touched and bar_index - d_touch_bar > 50
+    d_touched := false
+    d_rejected := false
+
+// ─── Update Active Storyline Visuals ───
+if story_m.active
+    line.set_xy2(story_m.path_ln, bar_index, close)
+    if not na(story_m.origin_ln)
+        line.set_x2(story_m.origin_ln, bar_index + 20)
+    if not na(story_m.dest_ln)
+        line.set_x2(story_m.dest_ln, bar_index + 20)
+    if not na(story_m.dest_lbl)
+        label.set_x(story_m.dest_lbl, bar_index + 5)
+    if not na(story_m.destination) and math.abs(close - story_m.destination) < atr_val * 3
+        story_m.phase := "ending"
+
+if story_w.active
+    line.set_xy2(story_w.path_ln, bar_index, close)
+    if not na(story_w.origin_ln)
+        line.set_x2(story_w.origin_ln, bar_index + 20)
+    if not na(story_w.dest_ln)
+        line.set_x2(story_w.dest_ln, bar_index + 20)
+    if not na(story_w.dest_lbl)
+        label.set_x(story_w.dest_lbl, bar_index + 5)
+    if not na(story_w.destination) and math.abs(close - story_w.destination) < atr_val * 3
+        story_w.phase := "ending"
+
+if story_d.active
+    line.set_xy2(story_d.path_ln, bar_index, close)
+    if not na(story_d.origin_ln)
+        line.set_x2(story_d.origin_ln, bar_index + 20)
+    if not na(story_d.dest_ln)
+        line.set_x2(story_d.dest_ln, bar_index + 20)
+    if not na(story_d.dest_lbl)
+        label.set_x(story_d.dest_lbl, bar_index + 5)
+    if not na(story_d.destination) and math.abs(close - story_d.destination) < atr_val * 3
+        story_d.phase := "ending"
+
+// ╔══════════════════════════════════════════════════════════════════════════════╗
 // ║              MODULE 3: MTF STORYLINE TRACKER                                ║
+
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 
 // ─── Storyline Direction ───
@@ -850,11 +840,11 @@ var int weekly_story_dir  = 0
 var int daily_story_dir   = 0
 
 // Update directions from active storylines
-if not na(story_m) and story_m.active
+if story_m.active
     monthly_story_dir := story_m.direction
-if not na(story_w) and story_w.active
+if story_w.active
     weekly_story_dir := story_w.direction
-if not na(story_d) and story_d.active
+if story_d.active
     daily_story_dir := story_d.direction
 
 // ─── Classic vs Advanced Mode ───
@@ -876,11 +866,11 @@ dominant_dir = (monthly_story_dir + weekly_story_dir + daily_story_dir) > 0 ? 1 
 
 // Derive phase from the most granular active storyline
 _active_phase = "none"
-if not na(story_d) and story_d.active
+if story_d.active
     _active_phase := story_d.phase
-else if not na(story_w) and story_w.active
+else if story_w.active
     _active_phase := story_w.phase
-else if not na(story_m) and story_m.active
+else if story_m.active
     _active_phase := story_m.phase
 
 // Fallback: use QM + swing structure for phase if no storyline active
@@ -906,7 +896,7 @@ if _active_phase != current_phase and _active_phase != "none" and _active_phase 
         phase_start_bar := bar_index
 
 // Also transition storyline phases: start → middle (via swing structure)
-if not na(story_d) and story_d.active and story_d.phase == "start" and bar_index - story_d.origin_bar > 20
+if story_d.active and story_d.phase == "start" and bar_index - story_d.origin_bar > 20
     if swing_hi_vals.size() >= 2 and swing_lo_vals.size() >= 2
         _lsh = swing_hi_vals.get(swing_hi_vals.size() - 1)
         _psh = swing_hi_vals.get(swing_hi_vals.size() - 2)
@@ -917,7 +907,7 @@ if not na(story_d) and story_d.active and story_d.phase == "start" and bar_index
         if story_d.direction == -1 and _lsh < _psh and _lsl < _psl
             story_d.phase := "middle"
 
-if not na(story_w) and story_w.active and story_w.phase == "start" and bar_index - story_w.origin_bar > 30
+if story_w.active and story_w.phase == "start" and bar_index - story_w.origin_bar > 30
     if swing_hi_vals.size() >= 2 and swing_lo_vals.size() >= 2
         _lsh = swing_hi_vals.get(swing_hi_vals.size() - 1)
         _psh = swing_hi_vals.get(swing_hi_vals.size() - 2)
@@ -1213,8 +1203,8 @@ if i_show_dash
         _m_col = monthly_story_dir > 0 ? #00E676 : monthly_story_dir < 0 ? #FF4444 : #888888
         table.cell(dash, 0, 2, "Monthly", text_color=#B0B0B0, text_size=size.tiny, text_halign=text.align_left)
         table.cell(dash, 1, 2, _m_arrow, text_color=_m_col, text_size=size.tiny, text_halign=text.align_center)
-        _m_phase = not na(story_m) and story_m.active ? story_m.phase : "—"
-        _m_tgt = not na(story_m) and story_m.active and not na(story_m.destination) ? str.tostring(story_m.destination, "#.##") : "—"
+        _m_phase = story_m.active ? story_m.phase : "—"
+        _m_tgt = story_m.active and not na(story_m.destination) ? str.tostring(story_m.destination, "#.##") : "—"
         table.cell(dash, 2, 2, _m_phase + " → " + _m_tgt, text_color=_m_col, text_size=size.tiny, text_halign=text.align_right)
 
         // Weekly
@@ -1222,8 +1212,8 @@ if i_show_dash
         _w_col = weekly_story_dir > 0 ? #00E676 : weekly_story_dir < 0 ? #FF4444 : #888888
         table.cell(dash, 0, 3, "Weekly", text_color=#B0B0B0, text_size=size.tiny, text_halign=text.align_left)
         table.cell(dash, 1, 3, _w_arrow, text_color=_w_col, text_size=size.tiny, text_halign=text.align_center)
-        _w_phase = not na(story_w) and story_w.active ? story_w.phase : "—"
-        _w_tgt = not na(story_w) and story_w.active and not na(story_w.destination) ? str.tostring(story_w.destination, "#.##") : "—"
+        _w_phase = story_w.active ? story_w.phase : "—"
+        _w_tgt = story_w.active and not na(story_w.destination) ? str.tostring(story_w.destination, "#.##") : "—"
         table.cell(dash, 2, 3, _w_phase + " → " + _w_tgt, text_color=_w_col, text_size=size.tiny, text_halign=text.align_right)
 
         // Daily
@@ -1231,8 +1221,8 @@ if i_show_dash
         _d_col = daily_story_dir > 0 ? #00E676 : daily_story_dir < 0 ? #FF4444 : #888888
         table.cell(dash, 0, 4, "Daily", text_color=#B0B0B0, text_size=size.tiny, text_halign=text.align_left)
         table.cell(dash, 1, 4, _d_arrow, text_color=_d_col, text_size=size.tiny, text_halign=text.align_center)
-        _d_phase = not na(story_d) and story_d.active ? story_d.phase : "—"
-        _d_tgt = not na(story_d) and story_d.active and not na(story_d.destination) ? str.tostring(story_d.destination, "#.##") : "—"
+        _d_phase = story_d.active ? story_d.phase : "—"
+        _d_tgt = story_d.active and not na(story_d.destination) ? str.tostring(story_d.destination, "#.##") : "—"
         table.cell(dash, 2, 4, _d_phase + " → " + _d_tgt, text_color=_d_col, text_size=size.tiny, text_halign=text.align_right)
 
         // Separator
