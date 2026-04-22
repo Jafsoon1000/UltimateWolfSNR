@@ -1,5 +1,5 @@
 //@version=5
-indicator("MSNR Ultimate v1.0", "MSNR Ultimate", overlay=true,
+indicator("Wolf Ultimate v1.0", "Wolf Ultimate", overlay=true,
   max_lines_count=500, max_labels_count=500, max_boxes_count=500,
   max_bars_back=5000)
 
@@ -646,7 +646,7 @@ if qm_patterns.size() > 0
                 _qm.active := false
 
 // ╔══════════════════════════════════════════════════════════════════════════════╗
-// ║            MSNR STORYLINE DETECTOR                                          ║
+// ║            Wolf STORYLINE DETECTOR                                          ║
 // ║    3-Event Detection: Touch → Rejection → QM Breakout                      ║
 // ║    Each HTF storyline (M/W/D) runs independently and can coexist           ║
 // ╚══════════════════════════════════════════════════════════════════════════════╝
@@ -832,7 +832,7 @@ if story_d.active
 // ╚══════════════════════════════════════════════════════════════════════════════╝
 
 // ─── Storyline Direction ───
-// Direction is now set by the 3-event MSNR Storyline Detector above
+// Direction is now set by the 3-event Wolf Storyline Detector above
 // (Touch → Rejection → QM Breakout at HTF level)
 
 var int monthly_story_dir = 0
@@ -1045,7 +1045,7 @@ if i_alert_setup and not na(active_apex) and barstate.isconfirmed
     _use_apex = na(refined_apex) ? active_apex : refined_apex
     _dist = math.abs(close - _use_apex)
     if _dist < atr_val * 2
-        setup_alert_msg := "MSNR Setup: " + active_setup_dir + " QM | Apex: " + str.tostring(_use_apex, "#.####") +
+        setup_alert_msg := "Wolf Setup: " + active_setup_dir + " QM | Apex: " + str.tostring(_use_apex, "#.####") +
           " | Phase: " + current_phase
 
 if setup_alert_msg != ""
@@ -1170,7 +1170,7 @@ if i_show_sniper and in_entry_zone and sniper_score > 0 and barstate.islast
 
 // Sniper alert
 if sniper_score >= i_min_score and barstate.isconfirmed and in_entry_zone
-    _alert_msg = "🎯 MSNR Sniper Score: " + str.tostring(sniper_score) + "/10 | " + active_setup_dir + " setup at " + str.tostring(_entry_price, "#.####")
+    _alert_msg = "🎯 Wolf Sniper Score: " + str.tostring(sniper_score) + "/10 | " + active_setup_dir + " setup at " + str.tostring(_entry_price, "#.####")
     alert(_alert_msg, alert.freq_once_per_bar_close)
 
 // ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -1190,7 +1190,7 @@ if i_show_dash
 
     if barstate.islast
         // Header
-        table.cell(dash, 0, 0, "MSNR ULTIMATE", text_color=#E0E0E0, text_size=size.small, text_halign=text.align_center)
+        table.cell(dash, 0, 0, "Wolf ULTIMATE", text_color=#E0E0E0, text_size=size.small, text_halign=text.align_center)
         table.merge_cells(dash, 0, 0, 2, 0)
 
         // Storyline Headers

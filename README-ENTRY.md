@@ -1,6 +1,6 @@
-# MSNR Entry Setups Strategy
+# Wolf Entry Setups Strategy
 
-This document outlines the entry models, structural rules, and execution conditions strictly utilizing the MSNR (Malaysian SNR) framework. The `MSNR_Entry_Setups.pine` indicator is built specifically to highlight these setups on Lower Timeframes (LTF) like 1m, 5m, and 15m.
+This document outlines the entry models, structural rules, and execution conditions strictly utilizing the Wolf (Malaysian SNR) framework. The `Wolf_Entry_Setups.pine` indicator is built specifically to highlight these setups on Lower Timeframes (LTF) like 1m, 5m, and 15m.
 
 ## 1. Core Structural Concepts
 Before taking any entries, it is vital to distinguish the structural validity of the setup when price touches an HTF (Higher Timeframe) level. 

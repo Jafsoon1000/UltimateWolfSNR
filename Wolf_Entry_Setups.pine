@@ -1,5 +1,5 @@
 //@version=5
-indicator("MSNR Entry Setups [LTF Execution]", "MSNR Entries", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500)
+indicator("Wolf Entry Setups [LTF Execution]", "Wolf Entries", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500)
 
 // ╔══════════════════════════════════════════════════════════════════════════════╗
 // ║                              INPUTS                                         ║
@@ -104,7 +104,7 @@ type Level
 var a_shapes = array.new<Level>()
 var v_shapes = array.new<Level>()
 
-// Update arrays on confirmed shapes from 15m (since this runs on LTF, we track 15m structure for MSNR Entry)
+// Update arrays on confirmed shapes from 15m (since this runs on LTF, we track 15m structure for Wolf Entry)
 if not na(m15_a) and m15_a != m15_a[1]
     array.push(a_shapes, Level.new(m15_a, bar_index, "A"))
     if array.size(a_shapes) > 10

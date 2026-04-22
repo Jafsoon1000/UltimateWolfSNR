@@ -1,6 +1,6 @@
-# 🐺 MSNR Ultimate v1.0 — TradingView Indicator
+# 🐺 Wolf Ultimate v1.0 — TradingView Indicator
 
-> A professional-grade Pine Script v5 indicator implementing the full MSNR (Market Structure, Narrative & Reversal) methodology across **5 interconnected modules**.
+> A professional-grade Pine Script v5 indicator implementing the full Wolf (Market Structure, Narrative & Reversal) methodology across **5 interconnected modules**.
 
 ![Pine Script](https://img.shields.io/badge/Pine%20Script-v5-blue?logo=tradingview)
 ![Modules](https://img.shields.io/badge/Modules-5-green)
@@ -25,7 +25,7 @@
 
 ## Overview
 
-The MSNR Ultimate indicator is a complete trading system that:
+The Wolf Ultimate indicator is a complete trading system that:
 
 1. **Maps the battlefield** — Auto-detects A-shape resistance, V-shape support, and Gap levels using candle body pricing
 2. **Identifies reversals** — Scans for Quasimodo (QM) patterns with auto-labeled sub-levels (Apex, LS, SBR/RBS, ERS)
@@ -181,7 +181,7 @@ Displayed as `🎯 Sniper: X/10` with color coding:
 ## Installation
 
 1. Open **TradingView** → Pine Script Editor
-2. Copy the contents of `MSNR_Ultimate.pine`
+2. Copy the contents of `Wolf_Ultimate.pine`
 3. Paste into the editor → Click **Add to Chart**
 4. Configure settings via the ⚙️ Settings panel
 
