@@ -1,10 +1,15 @@
-# 🐺 Wolf Ultimate v1.0 — TradingView Indicator
+<div align="center">
+  <img src="assets/hero-banner.png" alt="Wolf Ultimate SNR Trading System" width="100%" style="border-radius: 8px; margin-bottom: 20px;" />
 
-> A professional-grade Pine Script v5 indicator implementing the full Wolf (Market Structure, Narrative & Reversal) methodology across **5 interconnected modules**.
+  # 🐺 Wolf Ultimate v1.0 — TradingView Indicator
 
-![Pine Script](https://img.shields.io/badge/Pine%20Script-v5-blue?logo=tradingview)
-![Modules](https://img.shields.io/badge/Modules-5-green)
-![Status](https://img.shields.io/badge/Status-Production-brightgreen)
+  > A professional-grade Pine Script v5 indicator implementing the full Wolf (Market Structure, Narrative & Reversal) methodology across **5 interconnected modules**.
+
+  ![Pine Script](https://img.shields.io/badge/Pine%20Script-v5-blue?logo=tradingview)
+  ![Modules](https://img.shields.io/badge/Modules-5-green)
+  ![Status](https://img.shields.io/badge/Status-Production-brightgreen)
+  ![License](https://img.shields.io/badge/License-MIT-blue.svg)
+</div>
 
 ---
 
@@ -129,6 +134,8 @@ Dark-themed table (top-right) displaying:
 ---
 
 ## Module 4: Setup & Entry Engine
+
+> 📚 **Detailed Guide:** Check out the [Wolf Entry Setups Guide](docs/ENTRY_SETUPS.md) for a comprehensive breakdown of execution rules, LTF triggers, and structural validation.
 
 ### Phase 1 — QMS Setups (Start Phase)
 During the Start phase, the indicator watches the QM pattern's internal levels:
